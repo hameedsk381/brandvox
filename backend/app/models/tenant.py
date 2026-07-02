@@ -63,6 +63,8 @@ class Location(Base, BaseMixin):
     client_id = Column(UUID(as_uuid=True), ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
     name = Column(String(255), nullable=False)
     address = Column(String, nullable=True)
+    phone = Column(String(50), nullable=True)
+    website = Column(String(1024), nullable=True)
     google_place_id = Column(String(255), nullable=True)
     google_location_id = Column(String(255), nullable=True)
     last_sync_time = Column(DateTime, nullable=True)

@@ -111,8 +111,46 @@ async def detect_crisis(db: AsyncSession, review_id: UUID) -> Optional[CrisisAle
             
     return None
 
+async def dispatch_to_integration(
+    integration: AlertIntegration,
+    title: str,
+    body: str,
+    severity_color: str = "FF0000",
+    client: Optional[httpx.AsyncClient] = None,
+):
+    """Dispatch a notification message to a single alert integration (Slack, Teams, or Email)."""
+    payload = {}
+
+    if integration.type == IntegrationType.slack:
+        payload = {"text": f"{title}\n{body}"}
+    elif integration.type == IntegrationType.teams:
+        payload = {
+            "@type": "MessageCard",
+            "@context": "http://schema.org/extensions",
+            "themeColor": severity_color,
+            "summary": title,
+            "sections": [{
+                "activityTitle": title,
+                "text": body.replace("\n", "\n\n")
+            }]
+        }
+    elif integration.type == IntegrationType.email:
+        logger.info("Simulating email dispatch to %s: %s\n%s", integration.webhook_url, title, body)
+        return
+
+    if payload:
+        http_client = client or httpx.AsyncClient()
+        try:
+            await http_client.post(str(integration.webhook_url), json=payload, timeout=5.0)
+            logger.info("Dispatched alert to %s", integration.type.value)
+        except Exception as e:
+            logger.error("Failed to dispatch alert to %s: %s", integration.type.value, e)
+        finally:
+            if client is None:
+                await http_client.aclose()
+
+
 async def dispatch_alert(db: AsyncSession, alert: CrisisAlert, review: Review):
-    # Fetch integrations
     result = await db.execute(select(AlertIntegration).filter(
         AlertIntegration.location_id == alert.location_id,
         AlertIntegration.is_active == True
@@ -122,48 +160,53 @@ async def dispatch_alert(db: AsyncSession, alert: CrisisAlert, review: Review):
     if not integrations:
         return
         
-    # Get location name
     loc_res = await db.execute(select(Location).filter(Location.id == alert.location_id))
     location = loc_res.scalar_one_or_none()
     loc_name = location.name if location else "Unknown Location"
     
-    message_title = f"🚨 CRISIS ALERT: {alert.severity.value.upper()} Severity ({alert.category.value})"
-    message_body = (
+    title = f"🚨 CRISIS ALERT: {alert.severity.value.upper()} Severity ({alert.category.value})"
+    body = (
         f"*Location:* {loc_name}\n"
         f"*Reviewer:* {review.author_name}\n"
         f"*Rating:* {review.rating} Stars\n"
         f"*Review:* \"{review.text}\"\n\n"
         f"*AI Analysis:* {alert.analysis_reason}"
     )
+    severity_color = "FF0000" if alert.severity == AlertSeverity.critical else "FFA500"
 
     async with httpx.AsyncClient() as client:
         for integration in integrations:
-            payload = {}
-            if integration.type == IntegrationType.slack:
-                payload = {
-                    "text": f"{message_title}\n{message_body}"
-                }
-            elif integration.type == IntegrationType.teams:
-                payload = {
-                    "@type": "MessageCard",
-                    "@context": "http://schema.org/extensions",
-                    "themeColor": "FF0000" if alert.severity == AlertSeverity.critical else "FFA500",
-                    "summary": message_title,
-                    "sections": [{
-                        "activityTitle": message_title,
-                        "text": message_body.replace("\n", "\n\n")
-                    }]
-                }
-            elif integration.type == IntegrationType.email:
-                # Mock email send logic
-                logger.info(f"Simulating email dispatch to {integration.webhook_url} for Alert {alert.id}")
-                continue
-                
-            try:
-                await client.post(str(integration.webhook_url), json=payload, timeout=5.0)
-                logger.info(f"Dispatched alert to {integration.type.value}")
-            except Exception as e:
-                logger.error(f"Failed to dispatch alert to {integration.type.value}: {e}")
+            await dispatch_to_integration(integration, title, body, severity_color, client)
+
+
+async def notify_sync_failure(
+    db: AsyncSession,
+    location: Location,
+    error_message: str,
+    failures_count: int,
+):
+    """Notify configured alert integrations about a Google sync failure."""
+    result = await db.execute(select(AlertIntegration).filter(
+        AlertIntegration.location_id == location.id,
+        AlertIntegration.is_active == True
+    ))
+    integrations = result.scalars().all()
+
+    if not integrations:
+        logger.info("No alert integrations configured for location %s. Sync failure not sent.", location.id)
+        return
+
+    title = "⚠️ GOOGLE SYNC FAILURE"
+    body = (
+        f"*Location:* {location.name}\n"
+        f"*Error:* {error_message}\n"
+        f"*Consecutive failures:* {failures_count}\n"
+        f"*Action:* Check Google OAuth credentials and try a manual sync from the Integrations page."
+    )
+
+    async with httpx.AsyncClient() as client:
+        for integration in integrations:
+            await dispatch_to_integration(integration, title, body, client=client)
 
 async def get_alerts(db: AsyncSession, location_id: UUID) -> List[CrisisAlert]:
     result = await db.execute(select(CrisisAlert).filter(CrisisAlert.location_id == location_id).order_by(CrisisAlert.created_at.desc()))

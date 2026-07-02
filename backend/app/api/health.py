@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from fastapi import APIRouter
 from sqlalchemy import text
 from app.database import engine
@@ -18,8 +19,17 @@ async def health_check():
     except Exception as e:
         logger.warning("Health check DB connection failed: %s", e)
 
+    from app.core.scheduler import scheduler, _sync_in_progress
+    scheduler_status = "running" if scheduler.running else "stopped"
+
     return {
         "status": "healthy",
         "version": "1.0.0",
         "database": db_status,
+        "scheduler": {
+            "status": scheduler_status,
+            "sync_in_progress": _sync_in_progress,
+            "jobs": len(scheduler.get_jobs()),
+        },
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }

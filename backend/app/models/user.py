@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, ForeignKey, Boolean
+from sqlalchemy import Column, String, ForeignKey, Boolean, DateTime
 from sqlalchemy.orm import relationship
 from sqlalchemy import Uuid as UUID
 from app.database import Base
@@ -12,6 +12,13 @@ class User(Base, BaseMixin):
     name = Column(String(255), nullable=False)
     role = Column(String(50), default="read_only", nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
+
+    # MFA fields
+    mfa_enabled = Column(Boolean, default=False, nullable=False)
+    mfa_secret = Column(String(255), nullable=True)
+
+    # Password reset tracking
+    password_changed_at = Column(DateTime(timezone=True), nullable=True)
 
     # Scopes
     agency_id = Column(UUID(as_uuid=True), ForeignKey("agencies.id", ondelete="SET NULL"), nullable=True)

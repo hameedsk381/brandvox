@@ -10,7 +10,7 @@ from sqlalchemy import func, desc, and_, delete
 from app.models.tenant import Location
 from app.models.review import Review
 from app.models.sentiment import SentimentResult
-from app.models.competitor import Competitor, CompetitorReview, CompetitorAnalysis
+from app.models.competitor import Competitor, CompetitorReview, CompetitorAnalysis, CompetitorPriceRecord, CompetitorLocationAlert
 from app.ai.groq_client import get_groq_client
 
 logger = logging.getLogger(__name__)
@@ -269,3 +269,149 @@ async def get_latest_competitor_analysis(db: AsyncSession, location_id: UUID) ->
     stmt = select(CompetitorAnalysis).filter(CompetitorAnalysis.location_id == location_id).order_by(CompetitorAnalysis.analysis_date.desc()).limit(1)
     res = await db.execute(stmt)
     return res.scalar_one_or_none()
+
+# ── Pricing Monitoring ─────────────────────────────────────────────────
+
+async def record_competitor_price(db: AsyncSession, competitor_id: UUID, price: float, description: Optional[str] = None) -> CompetitorPriceRecord:
+    record = CompetitorPriceRecord(
+        competitor_id=competitor_id,
+        price=price,
+        description=description,
+        recorded_at=datetime.utcnow(),
+    )
+    db.add(record)
+    await db.commit()
+    await db.refresh(record)
+    return record
+
+async def get_competitor_prices(db: AsyncSession, competitor_id: UUID, limit: int = 20) -> List[CompetitorPriceRecord]:
+    result = await db.execute(
+        select(CompetitorPriceRecord)
+        .filter(CompetitorPriceRecord.competitor_id == competitor_id)
+        .order_by(CompetitorPriceRecord.recorded_at.desc())
+        .limit(limit)
+    )
+    return result.scalars().all()
+
+async def get_all_price_changes(db: AsyncSession, location_id: UUID, days: int = 90) -> List[Dict[str, Any]]:
+    comps = await db.execute(select(Competitor).filter(Competitor.location_id == location_id))
+    results = []
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    for comp in comps.scalars().all():
+        records = await db.execute(
+            select(CompetitorPriceRecord)
+            .filter(CompetitorPriceRecord.competitor_id == comp.id, CompetitorPriceRecord.recorded_at >= cutoff)
+            .order_by(CompetitorPriceRecord.recorded_at.desc())
+        )
+        for r in records.scalars().all():
+            results.append({
+                "id": str(r.id),
+                "competitor_id": str(comp.id),
+                "competitor_name": comp.name,
+                "price": r.price,
+                "description": r.description,
+                "recorded_at": r.recorded_at,
+            })
+    return results
+
+# ── Location Alerts ────────────────────────────────────────────────────
+
+async def create_location_alert(db: AsyncSession, agency_id: UUID, competitor_name: str, alert_type: str, description: Optional[str] = None, source_url: Optional[str] = None) -> CompetitorLocationAlert:
+    alert = CompetitorLocationAlert(
+        agency_id=agency_id,
+        competitor_name=competitor_name,
+        alert_type=alert_type,
+        description=description,
+        source_url=source_url,
+        detected_at=datetime.utcnow(),
+    )
+    db.add(alert)
+    await db.commit()
+    await db.refresh(alert)
+    return alert
+
+async def list_location_alerts(db: AsyncSession, agency_id: UUID, unread_only: bool = False) -> List[CompetitorLocationAlert]:
+    query = select(CompetitorLocationAlert).filter(CompetitorLocationAlert.agency_id == agency_id)
+    if unread_only:
+        query = query.filter(CompetitorLocationAlert.is_read == False)
+    query = query.order_by(CompetitorLocationAlert.detected_at.desc()).limit(50)
+    result = await db.execute(query)
+    return result.scalars().all()
+
+async def mark_alert_read(db: AsyncSession, alert_id: UUID, agency_id: UUID) -> bool:
+    result = await db.execute(
+        select(CompetitorLocationAlert).filter(CompetitorLocationAlert.id == alert_id, CompetitorLocationAlert.agency_id == agency_id)
+    )
+    alert = result.scalar_one_or_none()
+    if not alert:
+        return False
+    alert.is_read = True
+    await db.commit()
+    return True
+
+# ── Weekly AI Report ───────────────────────────────────────────────────
+
+async def generate_weekly_competitor_report(db: AsyncSession, location_id: UUID) -> Dict[str, Any]:
+    from datetime import date, timedelta
+
+    comps = await db.execute(select(Competitor).filter(Competitor.location_id == location_id))
+    competitors = comps.scalars().all()
+
+    week_ago = datetime.utcnow() - timedelta(days=7)
+    report_data = []
+
+    for comp in competitors:
+        price_records = await db.execute(
+            select(CompetitorPriceRecord)
+            .filter(CompetitorPriceRecord.competitor_id == comp.id, CompetitorPriceRecord.recorded_at >= week_ago)
+            .order_by(CompetitorPriceRecord.recorded_at.desc())
+        )
+        prices = price_records.scalars().all()
+
+        avg_rating = await db.execute(
+            select(func.avg(CompetitorReview.rating)).filter(CompetitorReview.competitor_id == comp.id)
+        )
+        avg = avg_rating.scalar()
+        review_count = await db.execute(
+            select(func.count(CompetitorReview.id)).filter(CompetitorReview.competitor_id == comp.id)
+        )
+
+        report_data.append({
+            "name": comp.name,
+            "avg_rating": round(float(avg), 2) if avg else None,
+            "review_count": review_count.scalar() or 0,
+            "price_changes": [
+                {"price": p.price, "date": p.recorded_at.isoformat() if p.recorded_at else None, "note": p.description}
+                for p in prices
+            ],
+        })
+
+    from app.ai.groq_client import get_groq_client
+    client = get_groq_client()
+    ai_summary = None
+    if client:
+        try:
+            prompt = (
+                "You are a competitive intelligence analyst. Based on this weekly data, "
+                "write a brief executive summary (2-3 sentences) highlighting key competitive threats and opportunities.\n\n"
+                f"Data: {report_data}\n\nReturn as JSON: {{\"summary\": \"...\", \"top_threat\": \"...\", \"top_opportunity\": \"...\"}}"
+            )
+            resp = await client.chat_completion(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=1000,
+                response_json=True,
+            )
+            import json
+            if resp:
+                ai_summary = json.loads(resp)
+        except Exception as e:
+            logger.warning("AI report generation failed: %s", e)
+
+    return {
+        "report_date": date.today().isoformat(),
+        "location_id": str(location_id),
+        "total_competitors": len(competitors),
+        "competitors": report_data,
+        "ai_insights": ai_summary or {"summary": "Run analysis to get AI-powered insights."},
+    }

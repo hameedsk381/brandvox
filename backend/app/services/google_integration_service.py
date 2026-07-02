@@ -19,10 +19,18 @@ GOOGLE_BUSINESS_INFORMATION_BASE_URL = "https://mybusinessbusinessinformation.go
 GOOGLE_REVIEWS_BASE_URL = "https://mybusiness.googleapis.com/v4"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 TOKEN_REFRESH_BUFFER_MINUTES = 5
+MAX_SYNC_BACKOFF_HOURS = 24
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _calculate_next_sync_after_failure(failures: int) -> datetime:
+    """Calculate next sync time using exponential backoff.
+    Wait min(2^failures hours, MAX_SYNC_BACKOFF_HOURS)."""
+    hours = min(2 ** failures, MAX_SYNC_BACKOFF_HOURS)
+    return _utcnow() + timedelta(hours=hours)
 
 
 async def mark_google_sync_status(
@@ -34,6 +42,14 @@ async def mark_google_sync_status(
     integration.last_sync_status = status
     integration.last_sync_error = error
     integration.last_sync_attempt_at = _utcnow()
+
+    if status == "failed":
+        integration.sync_failures = (integration.sync_failures or 0) + 1
+        integration.next_sync_at = _calculate_next_sync_after_failure(integration.sync_failures)
+    elif status == "success":
+        integration.sync_failures = 0
+        integration.next_sync_at = None
+
     await db.commit()
     await db.refresh(integration)
 
@@ -422,6 +438,8 @@ async def build_google_integration_status(
         "mapped_google_location_id": location.google_location_id if location else None,
         "last_sync_time": location.last_sync_time if location else None,
         "available_locations": available_locations,
+        "sync_failures": integration.sync_failures if integration else 0,
+        "next_sync_at": integration.next_sync_at if integration else None,
     }
 
 
@@ -503,4 +521,6 @@ async def import_google_reviews_for_location(
         }
     except ValueError as exc:
         await mark_google_sync_status(db, integration, "failed", str(exc))
+        from app.services.alert_service import notify_sync_failure
+        await notify_sync_failure(db, location, str(exc), integration.sync_failures)
         raise

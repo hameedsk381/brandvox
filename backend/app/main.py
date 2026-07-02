@@ -1,6 +1,6 @@
 import logging
 import uuid
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import HTTPException, RequestValidationError
 from fastapi.encoders import jsonable_encoder
@@ -10,6 +10,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 from app.config import get_settings
 from app.database import engine, Base
+from app.core.dependencies import SubscriptionRequired
 
 # Import all models to ensure they are registered
 from app.models import *
@@ -33,6 +34,13 @@ from app.api.alerts import router as alerts_router
 from app.api.forecasting import router as forecasting_router
 from app.api.billing import router as billing_router
 from app.api.audit import router as audit_router
+from app.api.scheduled_reports import router as scheduled_reports_router
+from app.api.api_keys import router as api_keys_router
+from app.api.webhooks import router as webhooks_router
+from app.api.dashboards import router as dashboards_router
+from app.api.customer_journey import router as customer_journey_router
+from app.api.campaigns import router as campaigns_router
+from app.api.seo import router as seo_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -66,6 +74,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# Security headers middleware
+# ---------------------------------------------------------------------------
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 # ---------------------------------------------------------------------------
 # Global exception handlers
@@ -120,21 +144,28 @@ api_prefix = "/api"
 app.include_router(health_router, prefix=api_prefix)
 app.include_router(auth_router, prefix=api_prefix)
 app.include_router(tenants_router, prefix=api_prefix)
-app.include_router(reviews_router, prefix=api_prefix)
-app.include_router(replies_router, prefix=api_prefix)
-app.include_router(analytics_router, prefix=api_prefix)
-app.include_router(brand_voice_router, prefix=api_prefix)
-app.include_router(branding_router, prefix=api_prefix)
-app.include_router(smart_rules_router, prefix=api_prefix)
-app.include_router(reports_router, prefix=api_prefix)
-app.include_router(users_router, prefix=api_prefix)
-app.include_router(google_auth_router, prefix=api_prefix)
+app.include_router(reviews_router, prefix=api_prefix, dependencies=[Depends(SubscriptionRequired())])
+app.include_router(replies_router, prefix=api_prefix, dependencies=[Depends(SubscriptionRequired())])
+app.include_router(analytics_router, prefix=api_prefix, dependencies=[Depends(SubscriptionRequired())])
+app.include_router(brand_voice_router, prefix=api_prefix, dependencies=[Depends(SubscriptionRequired())])
+app.include_router(branding_router, prefix=api_prefix, dependencies=[Depends(SubscriptionRequired())])
+app.include_router(smart_rules_router, prefix=api_prefix, dependencies=[Depends(SubscriptionRequired())])
+app.include_router(reports_router, prefix=api_prefix, dependencies=[Depends(SubscriptionRequired())])
+app.include_router(users_router, prefix=api_prefix, dependencies=[Depends(SubscriptionRequired())])
+app.include_router(google_auth_router, prefix=api_prefix, dependencies=[Depends(SubscriptionRequired())])
 app.include_router(chat_router, prefix=api_prefix)
-app.include_router(competitors_router, prefix=api_prefix)
-app.include_router(alerts_router, prefix=api_prefix)
-app.include_router(forecasting_router, prefix=api_prefix)
+app.include_router(competitors_router, prefix=api_prefix, dependencies=[Depends(SubscriptionRequired())])
+app.include_router(alerts_router, prefix=api_prefix, dependencies=[Depends(SubscriptionRequired())])
+app.include_router(forecasting_router, prefix=api_prefix, dependencies=[Depends(SubscriptionRequired())])
 app.include_router(billing_router, prefix=api_prefix)
-app.include_router(audit_router, prefix=api_prefix)
+app.include_router(audit_router, prefix=api_prefix, dependencies=[Depends(SubscriptionRequired())])
+app.include_router(scheduled_reports_router, prefix=api_prefix, dependencies=[Depends(SubscriptionRequired())])
+app.include_router(api_keys_router, prefix=api_prefix, dependencies=[Depends(SubscriptionRequired())])
+app.include_router(webhooks_router, prefix=api_prefix, dependencies=[Depends(SubscriptionRequired())])
+app.include_router(dashboards_router, prefix=api_prefix, dependencies=[Depends(SubscriptionRequired())])
+app.include_router(customer_journey_router, prefix=api_prefix)
+app.include_router(campaigns_router, prefix=api_prefix, dependencies=[Depends(SubscriptionRequired())])
+app.include_router(seo_router, prefix=api_prefix, dependencies=[Depends(SubscriptionRequired())])
 
 @app.on_event("startup")
 async def on_startup():
@@ -149,6 +180,13 @@ async def on_startup():
     # Start scheduler
     from app.core.scheduler import start_scheduler
     start_scheduler()
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    from app.core.scheduler import stop_scheduler
+    await stop_scheduler()
+    logger.info("Application shutdown complete")
 
 
 def _validate_environment():

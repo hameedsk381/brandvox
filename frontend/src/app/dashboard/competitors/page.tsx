@@ -4,7 +4,7 @@ import React, { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTenantStore } from "@/stores/tenant-store";
 import { useAuthStore } from "@/stores/auth-store";
-import { competitorsAPI } from "@/lib/api";
+import { competitorsAPI, api } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,7 +24,9 @@ import {
   CheckCircle,
   HelpCircle,
   XCircle,
-  Star
+  Star,
+  DollarSign,
+  FileText
 } from "lucide-react";
 import toast from "react-hot-toast";
 
@@ -36,6 +38,7 @@ export default function CompetitorsPage() {
   const [newCompName, setNewCompName] = useState("");
   const [googlePlaceId, setGooglePlaceId] = useState("");
   const [isAdding, setIsAdding] = useState(false);
+  const [weeklyReport, setWeeklyReport] = useState<any>(null);
 
   // Fetch competitors
   const { data: competitors, isLoading: isLoadingComp } = useQuery({
@@ -317,6 +320,118 @@ export default function CompetitorsPage() {
         </div>
       </div>
 
+      {/* Pricing Tracking & Alerts */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card className="border-border">
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <TrendingUp className="w-4 h-4 text-emerald-400" /> Pricing Intelligence
+            </CardTitle>
+            <CardDescription>Track competitor pricing changes</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-col gap-3">
+              {!competitors || competitors.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-4">Add competitors to track pricing.</p>
+              ) : (
+                competitors.map((comp: any) => (
+                  <PriceTracker key={comp.id} competitor={comp} locationId={currentLocation.id} />
+                ))
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-border">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-400" /> Intelligence Alerts
+                </CardTitle>
+                <CardDescription>New locations, campaigns, and expansion signals</CardDescription>
+              </div>
+              <Button size="sm" variant="outline" onClick={async () => {
+                const name = prompt("Competitor name:");
+                if (!name) return;
+                const type = prompt("Alert type (new_location / campaign / expansion):") || "new_location";
+                const desc = prompt("Description:");
+                try {
+                  await api.post(`/api/competitors/alerts?competitor_name=${encodeURIComponent(name)}&alert_type=${type}&description=${encodeURIComponent(desc || "")}`);
+                  queryClient.invalidateQueries({ queryKey: ["competitor-alerts"] });
+                  toast.success("Alert created");
+                } catch { toast.error("Failed"); }
+              }}>+ Alert</Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <AlertsList locationId={currentLocation.id} />
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Weekly Report */}
+      <Card className="border-border">
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-base flex items-center gap-2">
+                <FileText className="w-4 h-4 text-primary" /> Weekly Competitor Report
+              </CardTitle>
+              <CardDescription>AI-generated competitive intelligence summary</CardDescription>
+            </div>
+            <Button size="sm" variant="outline" onClick={async () => {
+              try {
+                const res = await api.get(`/api/competitors/weekly-report?location_id=${currentLocation.id}`);
+                setWeeklyReport(res.data);
+                toast.success("Report generated");
+              } catch { toast.error("Failed to generate report"); }
+            }}>Generate Report</Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {!weeklyReport ? (
+            <p className="text-sm text-muted-foreground text-center py-4">Generate a weekly report to see AI-powered competitive insights.</p>
+          ) : (
+            <div className="flex flex-col gap-4">
+              <div className="grid grid-cols-3 gap-4">
+                <Card><CardContent className="p-3 text-center"><p className="text-lg font-bold">{weeklyReport.total_competitors}</p><p className="text-xs text-muted-foreground">Competitors</p></CardContent></Card>
+                <Card><CardContent className="p-3 text-center"><p className="text-lg font-bold">{weeklyReport.competitors?.length || 0}</p><p className="text-xs text-muted-foreground">Tracked</p></CardContent></Card>
+                <Card><CardContent className="p-3 text-center"><p className="text-lg font-bold">{weeklyReport.report_date}</p><p className="text-xs text-muted-foreground">Report Date</p></CardContent></Card>
+              </div>
+              {weeklyReport.ai_insights?.summary && (
+                <div className="p-4 rounded-lg bg-primary/5 border border-primary/10">
+                  <p className="text-xs font-medium text-primary mb-1">AI Summary</p>
+                  <p className="text-sm text-muted-foreground">{weeklyReport.ai_insights.summary}</p>
+                  {weeklyReport.ai_insights.top_threat && (
+                    <p className="text-xs text-rose-400 mt-2">⚠ {weeklyReport.ai_insights.top_threat}</p>
+                  )}
+                  {weeklyReport.ai_insights.top_opportunity && (
+                    <p className="text-xs text-emerald-400 mt-1">✓ {weeklyReport.ai_insights.top_opportunity}</p>
+                  )}
+                </div>
+              )}
+              {weeklyReport.competitors?.map((c: any) => (
+                <div key={c.name} className="border border-border rounded-lg p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium text-sm">{c.name}</span>
+                    <span className="text-xs text-muted-foreground">{c.avg_rating ? `${c.avg_rating}★` : "—"} · {c.review_count} reviews</span>
+                  </div>
+                  {c.price_changes?.length > 0 && (
+                    <div className="mt-2 flex flex-col gap-1">
+                      <p className="text-xs font-medium text-muted-foreground">Recent price changes:</p>
+                      {c.price_changes.map((p: any, i: number) => (
+                        <p key={i} className="text-xs text-amber-400">${p.price} — {p.note || "No note"}</p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* AI Action Board / Report Analysis */}
       <Card className="border-border bg-background/5 backdrop-blur-xl dark:bg-[#0a0a0f]/50">
         <CardHeader>
@@ -394,6 +509,83 @@ export default function CompetitorsPage() {
           )}
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+function PriceTracker({ competitor, locationId }: { competitor: any; locationId: string }) {
+  const [price, setPrice] = useState("");
+  const [note, setNote] = useState("");
+  const { data: prices, refetch } = useQuery({
+    queryKey: ["competitor-prices", competitor.id],
+    queryFn: () => api.get(`/api/competitors/prices?competitor_id=${competitor.id}`).then(r => r.data),
+  });
+
+  const recordPrice = async () => {
+    if (!price) return;
+    try {
+      await api.post(`/api/competitors/prices?competitor_id=${competitor.id}&price=${parseFloat(price)}${note ? `&description=${encodeURIComponent(note)}` : ""}`);
+      toast.success("Price recorded");
+      setPrice("");
+      setNote("");
+      refetch();
+    } catch { toast.error("Failed"); }
+  };
+
+  const changes = Array.isArray(prices) ? prices : prices?.prices || prices?.changes || [];
+
+  return (
+    <div className="border border-border rounded-lg p-3">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-sm font-medium">{competitor.name}</span>
+        <span className="text-xs text-muted-foreground">{changes.length} recorded</span>
+      </div>
+      <div className="flex gap-2 mb-2">
+        <Input placeholder="Price ($)" value={price} onChange={e => setPrice(e.target.value)} className="w-24 text-xs" />
+        <Input placeholder="Note (optional)" value={note} onChange={e => setNote(e.target.value)} className="flex-1 text-xs" />
+        <Button size="sm" variant="outline" onClick={recordPrice}><DollarSign className="w-3 h-3" /></Button>
+      </div>
+      {changes.length > 0 && (
+        <div className="flex flex-col gap-1 max-h-24 overflow-y-auto">
+          {changes.slice(-5).reverse().map((p: any, i: number) => (
+            <p key={i} className="text-xs text-muted-foreground">
+              <span className="font-medium">${p.price}</span>
+              {p.note && <span> — {p.note}</span>}
+              <span className="ml-1 opacity-50">{p.recorded_at ? new Date(p.recorded_at).toLocaleDateString() : ""}</span>
+            </p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AlertsList({ locationId }: { locationId: string }) {
+  const { data: alerts, isLoading } = useQuery({
+    queryKey: ["competitor-alerts"],
+    queryFn: () => api.get("/api/competitors/alerts").then(r => r.data),
+  });
+
+  if (isLoading) return <div className="flex justify-center py-4"><RotateCw className="w-5 h-5 animate-spin" /></div>;
+
+  const items = Array.isArray(alerts) ? alerts : alerts?.alerts || [];
+
+  if (items.length === 0) return <p className="text-xs text-muted-foreground text-center py-4">No alerts yet.</p>;
+
+  return (
+    <div className="flex flex-col gap-2 max-h-64 overflow-y-auto">
+      {items.map((a: any, i: number) => (
+        <div key={a.id || i} className="flex items-start gap-2 p-2 rounded-lg border border-border text-xs">
+          <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${a.alert_type === "new_location" ? "bg-blue-500/20 text-blue-400" : a.alert_type === "campaign" ? "bg-amber-500/20 text-amber-400" : "bg-rose-500/20 text-rose-400"}`}>
+            {a.alert_type === "new_location" ? "NL" : a.alert_type === "campaign" ? "CA" : "EX"}
+          </div>
+          <div>
+            <p className="font-medium">{a.competitor_name}</p>
+            <p className="text-muted-foreground">{a.description || a.alert_type.replace("_", " ")}</p>
+            <p className="text-[10px] text-muted-foreground/50">{a.created_at ? new Date(a.created_at).toLocaleDateString() : ""}</p>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

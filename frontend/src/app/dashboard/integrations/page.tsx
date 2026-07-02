@@ -32,6 +32,8 @@ interface GoogleIntegrationStatus {
   mapped_google_location_id?: string | null;
   last_sync_time?: string | null;
   available_locations: GoogleLocationOption[];
+  sync_failures?: number;
+  next_sync_at?: string | null;
 }
 
 export default function IntegrationsPage() {
@@ -197,6 +199,12 @@ export default function IntegrationsPage() {
                 <p>Connected account: {status?.google_account_id || "Connected"}</p>
                 <p>Token expiry: {status?.token_expires_at ? new Date(status.token_expires_at).toLocaleString() : "Unknown"}</p>
                 <p>Last sync: {status?.last_sync_time ? new Date(status.last_sync_time).toLocaleString() : "No sync has run yet"}</p>
+                {status?.sync_failures != null && status.sync_failures > 0 && (
+                  <p className="text-amber-400">Sync failures: {status.sync_failures} (exponential backoff active)</p>
+                )}
+                {status?.next_sync_at && (
+                  <p>Next scheduled sync: {new Date(status.next_sync_at).toLocaleString()}</p>
+                )}
               </div>
 
               {(status?.last_sync_status === "failed" || status?.last_reply_status === "failed") && (

@@ -9,6 +9,25 @@ import { getErrorMessage } from "@/lib/api";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+function getPasswordStrength(pw: string): { label: string; color: string; width: string } {
+  let score = 0;
+  if (pw.length >= 8) score++;
+  if (/[A-Z]/.test(pw)) score++;
+  if (/[a-z]/.test(pw)) score++;
+  if (/\d/.test(pw)) score++;
+  if (/[!@#$%^&*(),.?":{}|<>_\-+=\[\]\\;'/`~]/.test(pw)) score++;
+  if (pw.length >= 12) score++;
+  const map = [
+    { label: "Weak", color: "bg-destructive", width: "16%" },
+    { label: "Fair", color: "bg-orange-400", width: "33%" },
+    { label: "Good", color: "bg-amber-400", width: "50%" },
+    { label: "Strong", color: "bg-lime-400", width: "66%" },
+    { label: "Very Strong", color: "bg-emerald-400", width: "83%" },
+    { label: "Excellent", color: "bg-emerald-500", width: "100%" },
+  ];
+  return map[Math.min(score, map.length - 1)];
+}
+
 interface FormErrors {
   name?: string;
   email?: string;
@@ -22,22 +41,19 @@ export default function RegisterPage() {
   const [password, setPassword] = useState("");
   const [errors, setErrors] = useState<FormErrors>({});
   const register = useRegister();
+  const strength = password ? getPasswordStrength(password) : null;
 
   const validate = (): boolean => {
     const newErrors: FormErrors = {};
-    if (!name.trim()) {
-      newErrors.name = "Name is required";
-    }
-    if (!email.trim()) {
-      newErrors.email = "Email is required";
-    } else if (!EMAIL_REGEX.test(email)) {
-      newErrors.email = "Please enter a valid email address";
-    }
-    if (!password) {
-      newErrors.password = "Password is required";
-    } else if (password.length < 6) {
-      newErrors.password = "Password must be at least 6 characters";
-    }
+    if (!name.trim()) newErrors.name = "Name is required";
+    if (!email.trim()) newErrors.email = "Email is required";
+    else if (!EMAIL_REGEX.test(email)) newErrors.email = "Please enter a valid email address";
+    if (!password) newErrors.password = "Password is required";
+    else if (password.length < 8) newErrors.password = "Password must be at least 8 characters";
+    else if (!/[A-Z]/.test(password)) newErrors.password = "Password needs an uppercase letter";
+    else if (!/[a-z]/.test(password)) newErrors.password = "Password needs a lowercase letter";
+    else if (!/\d/.test(password)) newErrors.password = "Password needs a digit";
+    else if (!/[!@#$%^&*(),.?":{}|<>_\-+=\[\]\\;'/`~]/.test(password)) newErrors.password = "Password needs a special character";
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -64,9 +80,7 @@ export default function RegisterPage() {
           <div className="w-12 h-12 rounded-lg bg-primary flex items-center justify-center text-primary-foreground font-black text-xl mb-4">
             R
           </div>
-          <h1 className="text-xl font-medium text-foreground tracking-tight">
-            ReputationOS AI
-          </h1>
+          <h1 className="text-xl font-medium text-foreground tracking-tight">ReputationOS AI</h1>
           <p className="text-muted-foreground text-sm mt-1">Create your account</p>
         </div>
 
@@ -94,15 +108,26 @@ export default function RegisterPage() {
             error={errors.email}
             required
           />
-          <Input
-            label="Password"
-            type="password"
-            placeholder="••••••••"
-            value={password}
-            onChange={(e) => { setPassword(e.target.value); setErrors((prev) => ({ ...prev, password: undefined, server: undefined })); }}
-            error={errors.password}
-            required
-          />
+          <div>
+            <Input
+              label="Password"
+              type="password"
+              placeholder="••••••••"
+              value={password}
+              onChange={(e) => { setPassword(e.target.value); setErrors((prev) => ({ ...prev, password: undefined, server: undefined })); }}
+              error={errors.password}
+              required
+            />
+            {strength && (
+              <div className="mt-2">
+                <div className="h-1.5 w-full bg-accent rounded-full overflow-hidden">
+                  <div className={`h-full rounded-full transition-all duration-300 ${strength.color}`} style={{ width: strength.width }} />
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-1 uppercase tracking-wider">{strength.label}</p>
+              </div>
+            )}
+          </div>
+
           <Button type="submit" loading={register.isPending} disabled={register.isPending} className="w-full mt-2">
             Create Account
           </Button>

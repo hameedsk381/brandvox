@@ -4,6 +4,7 @@ export interface User {
   name: string;
   role: string;
   is_active: boolean;
+  mfa_enabled: boolean;
   agency_id: string | null;
   client_id: string | null;
   location_id: string | null;

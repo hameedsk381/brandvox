@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { 
+import {
   LayoutDashboard, 
   MessageSquare, 
   BarChart3, 
@@ -20,7 +20,14 @@ import {
   Sparkles,
   Trophy,
   BellRing,
-  Activity
+  Activity,
+  Shield,
+  KeyRound,
+  Webhook,
+  LayoutGrid,
+  Navigation,
+  QrCode,
+  Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth-store";
@@ -43,10 +50,14 @@ export default function Sidebar() {
     { label: "Copilot", href: ROUTES.COPILOT, icon: Sparkles },
     { label: "Reviews", href: ROUTES.REVIEWS, icon: MessageSquare },
     { label: "Analytics", href: ROUTES.ANALYTICS, icon: BarChart3 },
+    { label: "Dashboards", href: "/dashboard/custom-dashboards", icon: LayoutGrid },
     { label: "Competitors", href: ROUTES.COMPETITORS, icon: Trophy },
     { label: "Alerts", href: ROUTES.ALERTS, icon: BellRing },
     { label: "Reports", href: ROUTES.REPORTS, icon: FileText },
     { label: "Integrations", href: ROUTES.INTEGRATIONS, icon: Link2 },
+    { label: "Review Campaigns", href: ROUTES.REVIEW_CAMPAIGNS, icon: QrCode },
+    { label: "Local SEO", href: ROUTES.SEO, icon: Search },
+    { label: "Customer Journey", href: "/dashboard/customer-journey", icon: Navigation },
   ];
 
   const settingsNav = [
@@ -55,6 +66,9 @@ export default function Sidebar() {
     { label: "Branding", href: ROUTES.BRANDING, icon: Palette },
     { label: "Team", href: ROUTES.TEAM, icon: Users },
     { label: "Audit Logs", href: ROUTES.AUDIT_LOGS || "/dashboard/settings/audit-logs", icon: Activity },
+    { label: "Security", href: "/dashboard/settings/security", icon: Shield },
+    { label: "API Keys", href: "/dashboard/settings/api-keys", icon: KeyRound },
+    { label: "Webhooks", href: "/dashboard/settings/webhooks", icon: Webhook },
   ];
 
   const handleLogout = () => {

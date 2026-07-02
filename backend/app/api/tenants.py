@@ -13,6 +13,7 @@ from app.schemas.tenant import (
 from app.models.tenant import Agency, Client, Location, BrandingConfig
 from app.models.user import User
 from app.core.dependencies import get_current_active_user, RoleChecker
+from app.services.billing_service import billing_service
 
 router = APIRouter(tags=["tenants"])
 
@@ -32,7 +33,7 @@ async def create_agency(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(RoleChecker(["super_admin"]))
 ):
-    agency = Agency(name=req.name, slug=req.slug, settings=req.settings)
+    agency = Agency(name=req.name, slug=req.slug, settings=req.settings, trial_ends_at=billing_service.start_trial())
     db.add(agency)
     await db.flush()
     

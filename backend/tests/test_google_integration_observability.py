@@ -65,6 +65,8 @@ async def test_sync_failure_marks_integration_status(db_session):
     assert integration.last_sync_error is not None
     assert "Re-map the location" in integration.last_sync_error
     assert integration.last_sync_attempt_at is not None
+    assert integration.sync_failures == 1
+    assert integration.next_sync_at is not None
 
 
 async def test_reply_failure_marks_integration_status(db_session):

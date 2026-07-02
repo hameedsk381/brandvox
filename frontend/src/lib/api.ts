@@ -173,6 +173,48 @@ export const authAPI = {
     const res = await api.get("/api/auth/me");
     return res.data;
   },
+  changePassword: async (data: { current_password: string; new_password: string }) => {
+    const res = await api.patch("/api/auth/password", data);
+    return res.data;
+  },
+  forgotPassword: async (data: { email: string }) => {
+    const res = await api.post("/api/auth/forgot-password", data);
+    return res.data;
+  },
+  resetPassword: async (data: { token: string; password: string }) => {
+    const res = await api.post("/api/auth/reset-password", data);
+    return res.data;
+  },
+  setupMfa: async () => {
+    const res = await api.post("/api/auth/mfa/setup");
+    return res.data;
+  },
+  verifyMfa: async (data: { code: string }) => {
+    const res = await api.post("/api/auth/mfa/verify", data);
+    return res.data;
+  },
+  disableMfa: async (data: { code: string }) => {
+    const res = await api.post("/api/auth/mfa/disable", data);
+    return res.data;
+  },
+  verifyMfaLogin: async (data: { mfa_token: string; code: string }) => {
+    const res = await api.post("/api/auth/mfa/verify-login", data);
+    return res.data;
+  },
+  mfaStatus: async () => {
+    const res = await api.get("/api/auth/mfa/status");
+    return res.data;
+  },
+};
+export const userAPI = {
+  exportMyData: async () => {
+    const res = await api.get("/api/users/me/export");
+    return res.data;
+  },
+  deleteMyAccount: async () => {
+    const res = await api.delete("/api/users/me");
+    return res.data;
+  },
 };
 
 export const tenantAPI = {
@@ -384,5 +426,50 @@ export const auditAPI = {
   list: async (params?: { action?: string; user_id?: string; resource_type?: string; limit?: number; offset?: number }) => {
     const res = await api.get("/api/audit", { params });
     return res.data;
+  }
+};
+
+export interface ScheduledReportData {
+  name: string;
+  report_type?: string;
+  format?: string;
+  cron_expression?: string;
+  recipients?: string[];
+  is_active?: boolean;
+  client_id?: string;
+  location_id?: string;
+}
+
+export interface ScheduledReportItem {
+  id: string;
+  agency_id: string;
+  client_id: string | null;
+  location_id: string | null;
+  name: string;
+  report_type: string;
+  format: string;
+  cron_expression: string;
+  recipients: string[];
+  is_active: boolean;
+  last_sent_at: string | null;
+  next_run_at: string | null;
+  created_at: string;
+}
+
+export const scheduledReportsAPI = {
+  list: async () => {
+    const res = await api.get("/api/reports/scheduled");
+    return res.data as ScheduledReportItem[];
+  },
+  create: async (data: ScheduledReportData) => {
+    const res = await api.post("/api/reports/scheduled", data);
+    return res.data as ScheduledReportItem;
+  },
+  update: async (id: string, data: Partial<ScheduledReportData>) => {
+    const res = await api.patch(`/api/reports/scheduled/${id}`, data);
+    return res.data as ScheduledReportItem;
+  },
+  delete: async (id: string) => {
+    await api.delete(`/api/reports/scheduled/${id}`);
   }
 };

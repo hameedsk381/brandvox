@@ -5,9 +5,9 @@ from sqlalchemy.orm import selectinload
 import httpx
 from datetime import datetime, timedelta
 from app.database import get_db
-from app.models.tenant import Client, Location
+from app.models.tenant import Client
 from app.models.integration import GoogleIntegration
-from app.core.dependencies import get_current_active_user
+from app.core.dependencies import get_current_active_user, verify_client_access, check_location_access
 from app.models.user import User
 from app.schemas.integration import GoogleIntegrationStatusResponse, GoogleLocationOptionResponse, GoogleSyncResponse
 from app.services.google_integration_service import (
@@ -51,13 +51,10 @@ async def get_google_auth_url(client_id: str, current_user: User = Depends(get_c
     """Get the Google OAuth2 authorization URL dynamically based on Agency credentials."""
     client_id_val, _ = await get_agency_credentials(db, client_id)
 
-    # Check authorization properly
+    # Verify authorization
     if current_user.role != "super_admin":
-        if current_user.role == "agency_admin":
-            # Just ensure the client belongs to their agency
-            pass # get_agency_credentials already implicitly checks this if we verify agency_id
-        elif str(current_user.client_id) != client_id:
-            raise HTTPException(status_code=403, detail="Not authorized for this client")
+        client_uuid_check = uuid.UUID(client_id)
+        await verify_client_access(client_uuid_check, current_user, db)
 
     auth_url = (
         f"https://accounts.google.com/o/oauth2/v2/auth?"
@@ -78,10 +75,8 @@ async def google_auth_callback(code: str, state: str, current_user: User = Depen
     client_id_val, client_secret_val = await get_agency_credentials(db, client_id)
 
     if current_user.role != "super_admin":
-        if current_user.role == "agency_admin":
-            pass
-        elif str(current_user.client_id) != client_id:
-            raise HTTPException(status_code=403, detail="Not authorized for this client")
+        client_uuid_check = uuid.UUID(client_id)
+        await verify_client_access(client_uuid_check, current_user, db)
 
     # In test mode, we'll mock the token exchange if they use test-client-id
     if client_id_val == "test-client-id":
@@ -138,10 +133,8 @@ async def google_auth_callback(code: str, state: str, current_user: User = Depen
 async def get_google_locations(client_id: str, current_user: User = Depends(get_current_active_user), db: AsyncSession = Depends(get_db)) -> list[GoogleLocationOptionResponse]:
     """Fetch locations from Google Business Profile API."""
     if current_user.role != "super_admin":
-        if current_user.role == "agency_admin":
-            pass
-        elif str(current_user.client_id) != client_id:
-            raise HTTPException(status_code=403, detail="Not authorized for this client")
+        client_uuid_check = uuid.UUID(client_id)
+        await verify_client_access(client_uuid_check, current_user, db)
 
     try:
         client = await get_client_with_agency(db, client_id)
@@ -166,10 +159,8 @@ async def get_google_integration_status(
     db: AsyncSession = Depends(get_db),
 ):
     if current_user.role != "super_admin":
-        if current_user.role == "agency_admin":
-            pass
-        elif str(current_user.client_id) != client_id:
-            raise HTTPException(status_code=403, detail="Not authorized for this client")
+        client_uuid_check = uuid.UUID(client_id)
+        await verify_client_access(client_uuid_check, current_user, db)
 
     try:
         return await build_google_integration_status(db, client_id, location_id)
@@ -182,14 +173,12 @@ async def get_google_integration_status(
 @router.post("/map-location")
 async def map_google_location(location_id: str, google_location_id: str, current_user: User = Depends(get_current_active_user), db: AsyncSession = Depends(get_db)) -> dict[str, str]:
     """Map a Google location ID to an internal location."""
-    result = await db.execute(select(Location).filter(Location.id == location_id))
-    location = result.scalars().first()
-    
-    if not location:
-        raise HTTPException(status_code=404, detail="Location not found")
-        
-    if current_user.role != "super_admin" and str(current_user.location_id) != location_id and str(current_user.client_id) != str(location.client_id):
-        raise HTTPException(status_code=403, detail="Not authorized for this location")
+    try:
+        location_uuid = uuid.UUID(location_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid location ID")
+
+    location = await check_location_access(location_uuid, current_user, db)
 
     location.google_location_id = google_location_id
     await db.commit()
@@ -203,19 +192,12 @@ async def sync_google_location_reviews(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(Location)
-        .filter(Location.id == location_id)
-        .options(selectinload(Location.client).selectinload(Client.agency))
-    )
-    location = result.scalars().first()
+    try:
+        location_uuid = uuid.UUID(location_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid location ID")
 
-    if not location:
-        raise HTTPException(status_code=404, detail="Location not found")
-
-    if current_user.role != "super_admin" and str(current_user.client_id) != str(location.client_id):
-        if str(current_user.location_id) != location_id:
-            raise HTTPException(status_code=403, detail="Not authorized for this location")
+    location = await check_location_access(location_uuid, current_user, db)
 
     integration = await get_client_integration(db, location.client_id)
     if not integration:

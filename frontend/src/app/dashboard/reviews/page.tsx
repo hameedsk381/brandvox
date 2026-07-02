@@ -1,17 +1,19 @@
 "use client";
 
-import React, { useState } from "react";
+import React from "react";
 import { useReviews } from "@/hooks/use-reviews";
 import { useTenantStore } from "@/stores/tenant-store";
+import { useFilterStore } from "@/stores/filter-store";
 import ReviewCard from "@/components/reviews/review-card";
 import ReviewFilters from "@/components/reviews/review-filters";
 import { Review } from "@/types";
 import { ReviewsListSkeleton } from "@/components/ui/page-skeleton";
 
 export default function ReviewsPage() {
-  const [filters, setFilters] = useState<Record<string, string | number | undefined>>({});
+  const currentFilters = useFilterStore((state) => state.currentFilters);
+  const setCurrentFilters = useFilterStore((state) => state.setCurrentFilters);
   const currentLocation = useTenantStore((state) => state.currentLocation);
-  const { data, isLoading } = useReviews(filters);
+  const { data, isLoading } = useReviews(currentFilters);
 
   return (
     <div className="max-w-7xl mx-auto flex flex-col gap-6">

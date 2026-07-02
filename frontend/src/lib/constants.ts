@@ -16,6 +16,11 @@ export const ROUTES = {
   SMART_RULES: "/dashboard/settings/smart-rules",
   TEAM: "/dashboard/settings/team",
   AUDIT_LOGS: "/dashboard/settings/audit-logs",
+  SECURITY: "/dashboard/settings/security",
+  REVIEW_CAMPAIGNS: "/dashboard/review-campaigns",
+  SEO: "/dashboard/seo",
+  FORGOT_PASSWORD: "/forgot-password",
+  RESET_PASSWORD: "/reset-password",
 };
 
 export const ROLE_LABELS: Record<string, string> = {

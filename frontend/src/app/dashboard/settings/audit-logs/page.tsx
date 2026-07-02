@@ -4,7 +4,11 @@ import { useState, useEffect } from "react";
 import { auditAPI } from "@/lib/api";
 import { Loader2, Activity, User, Search, Filter } from "lucide-react";
 import toast from "react-hot-toast";
-import { format } from "date-fns";
+function formatDate(d: string | Date) {
+  const dt = new Date(d);
+  return dt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) +
+    " " + dt.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+}
 
 export default function AuditLogsPage() {
   const [logs, setLogs] = useState<any[]>([]);
@@ -108,7 +112,7 @@ export default function AuditLogsPage() {
                 logs.map((log) => (
                   <tr key={log.id} className="border-b border-border hover:bg-muted/30">
                     <td className="px-6 py-4 whitespace-nowrap text-muted-foreground">
-                      {format(new Date(log.created_at), "MMM d, yyyy HH:mm:ss")}
+                      {formatDate(log.created_at)}
                     </td>
                     <td className="px-6 py-4">
                       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary">

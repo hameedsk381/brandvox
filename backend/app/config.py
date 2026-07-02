@@ -13,6 +13,18 @@ class Settings(BaseSettings):
     JWT_EXPIRY_HOURS: int = 24
     GROQ_API_KEY: str = ""
     FRONTEND_URL: str = "http://localhost:3000"
+    AUDIT_LOG_RETENTION_DAYS: int = 90
+    PASSWORD_RESET_EXPIRY_MINUTES: int = 60
+    RATE_LIMIT_PER_WINDOW: int = 5
+    RATE_LIMIT_WINDOW_SECONDS: int = 300
+    RAZORPAY_KEY_ID: str = ""
+    RAZORPAY_KEY_SECRET: str = ""
+    TWILIO_ACCOUNT_SID: str = ""
+    TWILIO_AUTH_TOKEN: str = ""
+    TWILIO_PHONE_NUMBER: str = ""
+    TWILIO_WHATSAPP_NUMBER: str = ""
+    SENDGRID_API_KEY: str = ""
+    SENDGRID_FROM_EMAIL: str = ""
     
     # Allow passing CORS origins as a JSON-encoded list or simple comma-separated string
     BACKEND_CORS_ORIGINS: str = '["http://localhost:3000", "http://127.0.0.1:3000"]'

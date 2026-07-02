@@ -7,7 +7,7 @@ async def test_register(client, db_session):
     response = await client.post("/api/auth/register", json={
         "name": "New User",
         "email": "newuser@test.com",
-        "password": "password123",
+        "password": "TestPass123!",
     })
     assert response.status_code == 201
     data = response.json()
@@ -20,12 +20,12 @@ async def test_register_duplicate(client, db_session):
     await client.post("/api/auth/register", json={
         "name": "User",
         "email": "dup@test.com",
-        "password": "password123",
+        "password": "TestPass123!",
     })
     response = await client.post("/api/auth/register", json={
         "name": "User Duplicate",
         "email": "dup@test.com",
-        "password": "password123",
+        "password": "TestPass123!",
     })
     assert response.status_code == 400
 
@@ -35,12 +35,12 @@ async def test_login_success(client, db_session):
     await client.post("/api/auth/register", json={
         "name": "Login User",
         "email": "login@test.com",
-        "password": "password123",
+        "password": "TestPass123!",
     })
     # Login
     response = await client.post("/api/auth/login", json={
         "email": "login@test.com",
-        "password": "password123",
+        "password": "TestPass123!",
     })
     assert response.status_code == 200
     data = response.json()

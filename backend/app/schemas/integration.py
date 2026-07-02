@@ -25,6 +25,8 @@ class GoogleIntegrationStatusResponse(BaseModel):
     mapped_google_location_id: Optional[str] = None
     last_sync_time: Optional[datetime] = None
     available_locations: List[GoogleLocationOptionResponse] = []
+    sync_failures: int = 0
+    next_sync_at: Optional[datetime] = None
 
 
 class GoogleSyncResponse(BaseModel):

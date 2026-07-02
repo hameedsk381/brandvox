@@ -3,7 +3,7 @@
 import React from "react";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Volume2, Cpu, Palette, Users, ArrowRight, Network } from "lucide-react";
+import { Volume2, Cpu, Palette, Users, ArrowRight, Network, Shield, KeyRound, Webhook } from "lucide-react";
 
 const settingsLinks = [
   {
@@ -35,6 +35,24 @@ const settingsLinks = [
     href: "/dashboard/settings/integrations",
     icon: Network,
     desc: "Configure global API credentials (OAuth)",
+  },
+  {
+    label: "Security",
+    href: "/dashboard/settings/security",
+    icon: Shield,
+    desc: "Password, MFA, and data privacy controls",
+  },
+  {
+    label: "API Keys",
+    href: "/dashboard/settings/api-keys",
+    icon: KeyRound,
+    desc: "Manage keys for programmatic API access",
+  },
+  {
+    label: "Webhooks",
+    href: "/dashboard/settings/webhooks",
+    icon: Webhook,
+    desc: "Configure event-driven integrations",
   },
 ];
 

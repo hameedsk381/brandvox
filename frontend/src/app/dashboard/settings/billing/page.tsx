@@ -4,44 +4,86 @@ import { useState, useEffect } from "react";
 import { billingAPI } from "@/lib/api";
 import { Check, CreditCard, ExternalLink, Loader2 } from "lucide-react";
 import toast from "react-hot-toast";
+import { api } from "@/lib/api";
+
+interface PlanInfo {
+  id: string;
+  name: string;
+  amount: number;
+  features: string[];
+}
+
+interface BillingStatus {
+  subscription_plan: string;
+  subscription_status: string;
+  trial_ends_at: string | null;
+  is_trial_active: boolean;
+}
 
 export default function BillingPage() {
-  const [status, setStatus] = useState<any>(null);
+  const [status, setStatus] = useState<BillingStatus | null>(null);
+  const [plans, setPlans] = useState<PlanInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
 
   useEffect(() => {
-    fetchStatus();
+    (async () => {
+      try {
+        const [statusData, plansData] = await Promise.all([
+          billingAPI.getStatus(),
+          api.get("/api/billing/plans").then((r) => r.data),
+        ]);
+        setStatus(statusData);
+        setPlans(plansData);
+      } catch {
+        toast.error("Failed to load billing data");
+      } finally {
+        setIsLoading(false);
+      }
+    })();
   }, []);
-
-  const fetchStatus = async () => {
-    try {
-      const data = await billingAPI.getStatus();
-      setStatus(data);
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
   const handleUpgrade = async (planId: string) => {
     try {
       setIsProcessing(true);
       const res = await billingAPI.checkout(planId);
-      // In a real Razorpay integration, we'd initialize the Razorpay checkout script here
-      // For now we just show a success message or mock redirect
-      toast.success(`Razorpay checkout initiated for ${planId} plan (Mock)`);
-      console.log("Order details:", res.order);
-      
-      // Simulate successful payment webhook after 2 seconds
-      setTimeout(() => {
-        toast.success("Payment successful!");
-        fetchStatus();
-      }, 2000);
-      
+      const order = res.order;
+      const keyId = res.key_id;
+
+      if (order.amount === 0) {
+        toast.success(`${planId} plan activated!`);
+        const { data } = await api.patch("/api/billing/update", { subscription_plan: planId });
+        setStatus((prev) => prev ? { ...prev, subscription_plan: planId, subscription_status: "active", is_trial_active: true } : prev);
+        return;
+      }
+
+      if (keyId && typeof (window as any).Razorpay !== "undefined") {
+        const options = {
+          key: keyId,
+          amount: order.amount,
+          currency: order.currency || "USD",
+          name: "ReputationOS AI",
+          order_id: order.id,
+          handler: async (response: any) => {
+            toast.success("Payment successful!");
+            const { data } = await billingAPI.getStatus();
+            setStatus(data);
+          },
+          prefill: { email: "", contact: "" },
+          theme: { color: "#6366f1" },
+        };
+        const rzp = new (window as any).Razorpay(options);
+        rzp.open();
+      } else {
+        toast.success(`Mock checkout for ${planId} plan`);
+        setTimeout(async () => {
+          const { data } = await api.patch("/api/billing/update", { subscription_plan: planId, subscription_status: "active" });
+          const { data: newStatus } = await billingAPI.getStatus();
+          setStatus(newStatus);
+        }, 1500);
+      }
     } catch (error: any) {
-      toast.error(error.response?.data?.detail || "Failed to start checkout");
+      toast.error(error?.response?.data?.detail || "Checkout failed");
     } finally {
       setIsProcessing(false);
     }
@@ -55,6 +97,9 @@ export default function BillingPage() {
     );
   }
 
+  const isOnTrial = status?.subscription_plan === "trial";
+  const paidPlans = plans.filter((p) => p.id !== "trial" && p.id !== "enterprise");
+
   return (
     <div className="max-w-4xl mx-auto space-y-8">
       <div>
@@ -65,21 +110,26 @@ export default function BillingPage() {
       <div className="bg-card rounded-xl border border-border p-6 shadow-sm">
         <h2 className="text-lg font-semibold flex items-center">
           <CreditCard className="w-5 h-5 mr-2 text-primary" />
-          Current Plan: {status?.subscription_plan === "trial" ? "Free Trial" : status?.subscription_plan?.toUpperCase()}
+          Current Plan: {isOnTrial ? "Free Trial" : (status?.subscription_plan || "").toUpperCase()}
         </h2>
         <div className="mt-4 flex items-center justify-between">
           <div>
             <p className="text-sm text-foreground">
-              Status: <span className="capitalize font-medium text-emerald-600">{status?.subscription_status}</span>
+              Status: <span className={`capitalize font-medium ${status?.subscription_status === "active" ? "text-emerald-400" : "text-destructive"}`}>
+                {status?.subscription_status}
+              </span>
             </p>
-            {status?.trial_ends_at && status.subscription_plan === "trial" && (
+            {isOnTrial && status?.trial_ends_at && (
               <p className="text-sm text-muted-foreground mt-1">
                 Trial ends on {new Date(status.trial_ends_at).toLocaleDateString()}
               </p>
             )}
+            {isOnTrial && !status?.is_trial_active && (
+              <p className="text-sm text-destructive font-medium mt-1">Your trial has expired</p>
+            )}
           </div>
-          {status?.subscription_plan !== "trial" && (
-            <button className="flex items-center text-sm font-medium text-primary hover:underline">
+          {!isOnTrial && (
+            <button className="flex items-center text-sm font-medium text-primary hover:underline bg-transparent border-none cursor-pointer">
               Manage in Razorpay Portal <ExternalLink className="w-4 h-4 ml-1" />
             </button>
           )}
@@ -87,58 +137,43 @@ export default function BillingPage() {
       </div>
 
       <div className="grid md:grid-cols-2 gap-6 mt-8">
-        {/* Starter Plan */}
-        <div className="bg-card rounded-xl border border-border p-6 shadow-sm flex flex-col relative overflow-hidden">
-          <div className="mb-4">
-            <h3 className="text-xl font-bold text-foreground">Starter</h3>
-            <p className="text-muted-foreground text-sm mt-1">For small businesses starting out.</p>
-          </div>
-          <div className="mb-6">
-            <span className="text-3xl font-bold">$19</span>
-            <span className="text-muted-foreground">/month</span>
-          </div>
-          <ul className="space-y-3 mb-8 flex-1">
-            <li className="flex items-center text-sm"><Check className="w-4 h-4 text-emerald-500 mr-2 shrink-0" /> Up to 3 locations</li>
-            <li className="flex items-center text-sm"><Check className="w-4 h-4 text-emerald-500 mr-2 shrink-0" /> Standard AI replies</li>
-            <li className="flex items-center text-sm"><Check className="w-4 h-4 text-emerald-500 mr-2 shrink-0" /> Basic reporting</li>
-          </ul>
-          <button 
-            onClick={() => handleUpgrade("starter")}
-            disabled={isProcessing || status?.subscription_plan === "starter"}
-            className="w-full py-2.5 rounded-lg font-medium bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-          >
-            {status?.subscription_plan === "starter" ? "Current Plan" : "Upgrade to Starter"}
-          </button>
-        </div>
-
-        {/* Pro Plan */}
-        <div className="bg-card rounded-xl border-2 border-primary p-6 shadow-md flex flex-col relative overflow-hidden">
-          <div className="absolute top-0 right-0 bg-primary text-primary-foreground text-xs font-bold px-3 py-1 rounded-bl-lg">
-            RECOMMENDED
-          </div>
-          <div className="mb-4">
-            <h3 className="text-xl font-bold text-foreground">Pro</h3>
-            <p className="text-muted-foreground text-sm mt-1">For growing agencies and brands.</p>
-          </div>
-          <div className="mb-6">
-            <span className="text-3xl font-bold">$49</span>
-            <span className="text-muted-foreground">/month</span>
-          </div>
-          <ul className="space-y-3 mb-8 flex-1">
-            <li className="flex items-center text-sm"><Check className="w-4 h-4 text-emerald-500 mr-2 shrink-0" /> Unlimited locations</li>
-            <li className="flex items-center text-sm"><Check className="w-4 h-4 text-emerald-500 mr-2 shrink-0" /> Advanced AI Copilot</li>
-            <li className="flex items-center text-sm"><Check className="w-4 h-4 text-emerald-500 mr-2 shrink-0" /> Competitor & Forecasting</li>
-            <li className="flex items-center text-sm"><Check className="w-4 h-4 text-emerald-500 mr-2 shrink-0" /> Custom branding</li>
-          </ul>
-          <button 
-            onClick={() => handleUpgrade("pro")}
-            disabled={isProcessing || status?.subscription_plan === "pro"}
-            className="w-full py-2.5 rounded-lg font-medium bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-          >
-             {status?.subscription_plan === "pro" ? "Current Plan" : "Upgrade to Pro"}
-          </button>
-        </div>
+        {paidPlans.map((plan, idx) => {
+          const isCurrent = status?.subscription_plan === plan.id;
+          return (
+            <div key={plan.id} className={`bg-card rounded-xl border${idx === 1 ? "-2 border-primary" : " border-border"} p-6 shadow-sm flex flex-col relative overflow-hidden`}>
+              {idx === 1 && (
+                <div className="absolute top-0 right-0 bg-primary text-primary-foreground text-xs font-bold px-3 py-1 rounded-bl-lg">
+                  RECOMMENDED
+                </div>
+              )}
+              <div className="mb-4">
+                <h3 className="text-xl font-bold text-foreground">{plan.name}</h3>
+              </div>
+              <div className="mb-6">
+                <span className="text-3xl font-bold">${plan.amount / 100}</span>
+                <span className="text-muted-foreground">/month</span>
+              </div>
+              <ul className="space-y-3 mb-8 flex-1">
+                {plan.features.map((f) => (
+                  <li key={f} className="flex items-center text-sm">
+                    <Check className="w-4 h-4 text-emerald-500 mr-2 shrink-0" /> {f}
+                  </li>
+                ))}
+              </ul>
+              <button
+                onClick={() => handleUpgrade(plan.id)}
+                disabled={isProcessing || isCurrent}
+                className={`w-full py-2.5 rounded-lg font-medium transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 ${isCurrent ? "bg-accent text-muted-foreground" : "bg-primary text-primary-foreground hover:bg-primary/90"}`}
+              >
+                {isProcessing ? "Processing..." : isCurrent ? "Current Plan" : `Upgrade to ${plan.name}`}
+              </button>
+            </div>
+          );
+        })}
       </div>
+
+      {/* Load Razorpay script */}
+      <script src="https://checkout.razorpay.com/v1/checkout.js" />
     </div>
   );
 }
