@@ -34,6 +34,7 @@ interface GoogleIntegrationStatus {
   available_locations: GoogleLocationOption[];
   sync_failures?: number;
   next_sync_at?: string | null;
+  google_api_error?: string | null;
 }
 
 export default function IntegrationsPage() {
@@ -225,6 +226,12 @@ export default function IntegrationsPage() {
                       {status.last_reply_error || "Unknown reply error"}
                     </p>
                   )}
+                </div>
+              )}
+
+              {status?.google_api_error && (
+                <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-300">
+                  <p>Google API error: {status.google_api_error}</p>
                 </div>
               )}
 

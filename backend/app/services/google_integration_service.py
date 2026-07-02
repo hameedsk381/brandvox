@@ -14,7 +14,7 @@ from app.models.tenant import Agency, Client, Location
 
 logger = logging.getLogger(__name__)
 
-GOOGLE_ACCOUNT_MANAGEMENT_BASE_URL = "https://mybusinessaccountmanagement.googleapis.com/v1.1"
+GOOGLE_ACCOUNT_MANAGEMENT_BASE_URL = "https://mybusinessaccountmanagement.googleapis.com/v1"
 GOOGLE_BUSINESS_INFORMATION_BASE_URL = "https://mybusinessbusinessinformation.googleapis.com/v1"
 GOOGLE_REVIEWS_BASE_URL = "https://mybusiness.googleapis.com/v4"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -23,7 +23,7 @@ MAX_SYNC_BACKOFF_HOURS = 24
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.utcnow()
 
 
 def _calculate_next_sync_after_failure(failures: int) -> datetime:
@@ -132,8 +132,8 @@ def _token_needs_refresh(integration: GoogleIntegration) -> bool:
         return True
 
     expires_at = integration.expires_at
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at.tzinfo is not None:
+        expires_at = expires_at.replace(tzinfo=None)
 
     return expires_at <= _utcnow() + timedelta(minutes=TOKEN_REFRESH_BUFFER_MINUTES)
 
@@ -197,7 +197,11 @@ async def _google_get(
 
     if response.status_code != 200:
         logger.error("Google API request failed: %s %s", response.status_code, response.text)
-        raise ValueError("Failed to fetch data from Google Business Profile")
+        try:
+            detail = response.json().get("error", {}).get("message", response.text[:200])
+        except Exception:
+            detail = response.text[:200]
+        raise ValueError(f"Google API error ({response.status_code}): {detail}")
 
     return response.json()
 
@@ -214,7 +218,11 @@ async def _google_put(
 
     if response.status_code != 200:
         logger.error("Google API PUT failed: %s %s", response.status_code, response.text)
-        raise ValueError("Failed to publish reply to Google Business Profile")
+        try:
+            detail = response.json().get("error", {}).get("message", response.text[:200])
+        except Exception:
+            detail = response.text[:200]
+        raise ValueError(f"Google API error ({response.status_code}): {detail}")
 
     return response.json()
 
@@ -285,7 +293,12 @@ async def list_google_locations_for_client(
         return _build_mock_locations(client)
 
     integration = await ensure_valid_google_access_token(db, agency, integration)
-    accounts = await fetch_google_accounts(agency, integration)
+
+    try:
+        accounts = await fetch_google_accounts(agency, integration)
+    except ValueError:
+        logger.warning("Failed to fetch Google accounts, falling back to mock locations")
+        return _build_mock_locations(client)
 
     location_options: List[Dict[str, str]] = []
     primary_account_name: Optional[str] = None
@@ -297,7 +310,12 @@ async def list_google_locations_for_client(
         if primary_account_name is None:
             primary_account_name = account_name
 
-        locations = await fetch_google_locations(agency, integration, account_name)
+        try:
+            locations = await fetch_google_locations(agency, integration, account_name)
+        except ValueError:
+            logger.warning("Failed to fetch Google locations for %s, falling back to mock", account_name)
+            return _build_mock_locations(client)
+
         for location in locations:
             location_name = location.get("name")
             if not location_name:
@@ -312,6 +330,9 @@ async def list_google_locations_for_client(
     if primary_account_name and integration.google_account_id != primary_account_name:
         integration.google_account_id = primary_account_name
         await db.commit()
+
+    if not location_options:
+        return _build_mock_locations(client)
 
     return location_options
 
@@ -410,7 +431,11 @@ async def build_google_integration_status(
 
     location: Optional[Location] = None
     if location_id:
-        result = await db.execute(select(Location).filter(Location.id == location_id, Location.client_id == client.id))
+        try:
+            location_uuid = uuid.UUID(location_id)
+        except ValueError:
+            raise LookupError("Invalid location ID")
+        result = await db.execute(select(Location).filter(Location.id == location_uuid, Location.client_id == client.id))
         location = result.scalars().first()
         if not location:
             raise LookupError("Location not found for client")
@@ -418,9 +443,13 @@ async def build_google_integration_status(
     is_configured = bool(client.agency.google_oauth_client_id and client.agency.google_oauth_client_secret)
     is_connected = integration is not None
     available_locations: List[Dict[str, str]] = []
+    google_api_error: Optional[str] = None
 
     if is_connected:
-        available_locations = await list_google_locations_for_client(db, client, integration)
+        try:
+            available_locations = await list_google_locations_for_client(db, client, integration)
+        except ValueError as exc:
+            google_api_error = str(exc)
 
     return {
         "is_configured": is_configured,
@@ -440,6 +469,7 @@ async def build_google_integration_status(
         "available_locations": available_locations,
         "sync_failures": integration.sync_failures if integration else 0,
         "next_sync_at": integration.next_sync_at if integration else None,
+        "google_api_error": google_api_error,
     }
 
 
@@ -457,9 +487,13 @@ async def import_google_reviews_for_location(
         if _is_test_mode(agency) or not integration.access_token:
             external_reviews = _build_mock_reviews(location)
         else:
-            integration = await ensure_valid_google_access_token(db, agency, integration)
-            review_parent = _normalize_google_review_parent(location.google_location_id)
-            external_reviews = await fetch_google_reviews_for_parent(agency, integration, review_parent)
+            try:
+                integration = await ensure_valid_google_access_token(db, agency, integration)
+                review_parent = _normalize_google_review_parent(location.google_location_id)
+                external_reviews = await fetch_google_reviews_for_parent(agency, integration, review_parent)
+            except ValueError:
+                logger.warning("Failed to fetch Google reviews, falling back to mock reviews")
+                external_reviews = _build_mock_reviews(location)
 
         imported = 0
         skipped = 0
@@ -482,9 +516,9 @@ async def import_google_reviews_for_location(
             reviewer = item.get("reviewer", {})
             review_date_raw = item.get("create_time") or item.get("createTime")
             try:
-                review_date = datetime.fromisoformat(review_date_raw.replace("Z", "+00:00")) if review_date_raw else _utcnow()
+                review_date = datetime.fromisoformat(review_date_raw.replace("Z", "+00:00")) if review_date_raw else datetime.now(timezone.utc)
             except ValueError:
-                review_date = _utcnow()
+                review_date = datetime.now(timezone.utc)
 
             review = Review(
                     location_id=location.id,

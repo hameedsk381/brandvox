@@ -24,7 +24,7 @@ export default function ReviewsPage() {
         </p>
       </div>
 
-      <ReviewFilters onFilter={setFilters} />
+      <ReviewFilters onFilter={setCurrentFilters} />
 
       {isLoading ? (
         <ReviewsListSkeleton />

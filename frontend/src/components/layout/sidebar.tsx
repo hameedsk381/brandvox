@@ -28,6 +28,7 @@ import {
   Navigation,
   QrCode,
   Search,
+  Network,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth-store";
@@ -65,6 +66,7 @@ export default function Sidebar() {
     { label: "Smart Rules", href: ROUTES.SMART_RULES, icon: Cpu },
     { label: "Branding", href: ROUTES.BRANDING, icon: Palette },
     { label: "Team", href: ROUTES.TEAM, icon: Users },
+    { label: "API & Integrations", href: "/dashboard/settings/integrations", icon: Network },
     { label: "Audit Logs", href: ROUTES.AUDIT_LOGS || "/dashboard/settings/audit-logs", icon: Activity },
     { label: "Security", href: "/dashboard/settings/security", icon: Shield },
     { label: "API Keys", href: "/dashboard/settings/api-keys", icon: KeyRound },

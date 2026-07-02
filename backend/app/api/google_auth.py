@@ -204,6 +204,7 @@ async def sync_google_location_reviews(
         raise HTTPException(status_code=400, detail="Google account not connected")
 
     try:
-        return await import_google_reviews_for_location(db, location, integration, location.client.agency)
+        client = await get_client_with_agency(db, str(location.client_id))
+        return await import_google_reviews_for_location(db, location, integration, client.agency)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

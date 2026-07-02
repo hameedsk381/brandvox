@@ -22,14 +22,27 @@ interface FormErrors {
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const token = useAuthStore((state) => state.token);
   const [email, setEmail] = useState("admin@reputationos.ai");
   const [password, setPassword] = useState("demo1234");
   const [code, setCode] = useState("");
   const [errors, setErrors] = useState<FormErrors>({});
+  const [ready, setReady] = useState(false);
   const login = useLogin();
   const verifyMfa = useVerifyMfaLogin();
   const mfaToken = useAuthStore((state) => state.mfaToken);
   const showMfa = searchParams.get("mfa") === "1" && !!mfaToken;
+
+  useEffect(() => {
+    const timer = setTimeout(() => setReady(true), 100);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (ready && token) {
+      router.replace("/dashboard");
+    }
+  }, [token, ready, router]);
 
   useEffect(() => {
     if (searchParams.get("msg") === "session_expired") {

@@ -42,7 +42,7 @@ async def sync_google_reviews():
             locations = result.scalars().all()
             total_locations = len(locations)
 
-            now = datetime.now(timezone.utc)
+            now = datetime.utcnow()
 
             for location in locations:
                 integ_res = await db.execute(
@@ -101,7 +101,7 @@ async def process_scheduled_reports():
 
     logger.info("Checking for due scheduled reports...")
     async with AsyncSessionLocal() as db:
-        now = datetime.now(timezone.utc)
+        now = datetime.utcnow()
         result = await db.execute(
             select(ScheduledReport).filter(
                 ScheduledReport.is_active == True,

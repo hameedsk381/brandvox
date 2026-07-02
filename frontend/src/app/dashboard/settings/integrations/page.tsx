@@ -39,7 +39,10 @@ export default function IntegrationSettingsPage() {
   };
 
   const handleSave = async () => {
-    if (!agencyId) return;
+    if (!agencyId) {
+      toast.error("You must belong to an agency to save credentials");
+      return;
+    }
     if (!clientId.trim() || (!hasSecret && !clientSecret.trim())) {
       toast.error("Both Client ID and Client Secret are required");
       return;
@@ -61,9 +64,25 @@ export default function IntegrationSettingsPage() {
  }
  };
 
- if (isLoading) {
- return <div className="flex justify-center p-12"><RefreshCw className="w-6 h-6 animate-spin text-primary" /></div>;
- }
+  if (!agencyId) {
+  return (
+    <div className="max-w-4xl mx-auto flex flex-col gap-6">
+      <div>
+        <h1 className="text-2xl font-bold text-foreground">Integration Settings</h1>
+        <p className="text-sm text-muted-foreground mt-1">Manage global API credentials for your agency</p>
+      </div>
+      <Card className="bg-background/5 backdrop-blur-xl border-border dark:bg-[#0a0a0f]/50">
+        <CardContent className="p-12 text-center text-muted-foreground">
+          You must be associated with an agency to manage integration credentials.
+        </CardContent>
+      </Card>
+    </div>
+  );
+  }
+
+  if (isLoading) {
+  return <div className="flex justify-center p-12"><RefreshCw className="w-6 h-6 animate-spin text-primary" /></div>;
+  }
 
  return (
  <div className="max-w-4xl mx-auto flex flex-col gap-6">

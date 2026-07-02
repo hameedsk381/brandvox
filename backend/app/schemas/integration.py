@@ -27,6 +27,7 @@ class GoogleIntegrationStatusResponse(BaseModel):
     available_locations: List[GoogleLocationOptionResponse] = []
     sync_failures: int = 0
     next_sync_at: Optional[datetime] = None
+    google_api_error: Optional[str] = None
 
 
 class GoogleSyncResponse(BaseModel):
