@@ -1,0 +1,36 @@
+import os
+import json
+from typing import List, Optional
+from functools import lru_cache
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
+
+class Settings(BaseSettings):
+    DATABASE_URL: str = Field(default="postgresql+asyncpg://repuser:reppass@postgres:5432/reputationos")
+    DATABASE_URL_SYNC: str = Field(default="postgresql://repuser:reppass@postgres:5432/reputationos")
+    JWT_SECRET: str = Field(default="change-me-in-production-use-a-long-random-string")
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRY_HOURS: int = 24
+    GROQ_API_KEY: str = ""
+    FRONTEND_URL: str = "http://localhost:3000"
+    
+    # Allow passing CORS origins as a JSON-encoded list or simple comma-separated string
+    BACKEND_CORS_ORIGINS: str = '["http://localhost:3000", "http://127.0.0.1:3000"]'
+
+    @property
+    def cors_origins(self) -> List[str]:
+        try:
+            return json.loads(self.BACKEND_CORS_ORIGINS)
+        except (json.JSONDecodeError, TypeError):
+            # Fallback to splitting by comma if it's not a JSON list
+            return [x.strip() for x in self.BACKEND_CORS_ORIGINS.split(",") if x.strip()]
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore"
+    )
+
+@lru_cache()
+def get_settings() -> Settings:
+    return Settings()
