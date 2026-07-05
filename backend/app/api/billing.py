@@ -51,7 +51,22 @@ async def create_checkout(
     if not agency:
         raise HTTPException(status_code=404, detail="Agency not found")
     order = await billing_service.create_checkout_session(agency, req.plan_id)
-    return {"order": order, "key_id": billing_service.key_id or ""}
+
+    # Server-side activation for flows that involve no real payment:
+    # free plans always; mock checkout only outside production. Paid plans in
+    # production activate exclusively via the verified Razorpay webhook.
+    from app.config import get_settings
+    activated = False
+    if PLANS[req.plan_id]["amount"] <= 0:
+        activated = True
+    elif billing_service.client is None and get_settings().ENVIRONMENT != "production":
+        activated = True
+    if activated:
+        agency.subscription_plan = req.plan_id
+        agency.subscription_status = "active"
+        await db.commit()
+
+    return {"order": order, "key_id": billing_service.key_id or "", "activated": activated}
 
 @router.post("/webhook")
 async def razorpay_webhook(
@@ -59,19 +74,34 @@ async def razorpay_webhook(
     db: AsyncSession = Depends(get_db),
     x_razorpay_signature: Optional[str] = Header(None),
 ):
-    payload = await request.json()
-    await billing_service.handle_webhook(db, payload, x_razorpay_signature)
+    import json as _json
+
+    raw_body = await request.body()
+    if not billing_service.verify_webhook_signature(raw_body, x_razorpay_signature):
+        raise HTTPException(status_code=400, detail="Invalid or missing webhook signature")
+    try:
+        payload = _json.loads(raw_body)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+    await billing_service.handle_webhook(db, payload)
     return {"status": "ok"}
 
 @router.patch("/update")
 async def update_billing(
     req: BillingUpdateRequest,
+    agency_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(RoleChecker(["agency_admin"])),
+    current_user: User = Depends(get_current_active_user),
 ):
-    if not current_user.agency_id:
-        raise HTTPException(status_code=400, detail="User is not part of an agency")
-    result = await db.execute(select(Agency).filter(Agency.id == current_user.agency_id))
+    # Subscription state is set by verified payment webhooks. Manual override
+    # is a support tool for platform operators only — an agency admin must
+    # never be able to upgrade their own plan without paying.
+    if current_user.role != "super_admin":
+        raise HTTPException(status_code=403, detail="Only platform administrators may modify billing state")
+    target_id = agency_id or (str(current_user.agency_id) if current_user.agency_id else None)
+    if not target_id:
+        raise HTTPException(status_code=400, detail="agency_id required")
+    result = await db.execute(select(Agency).filter(Agency.id == target_id))
     agency = result.scalars().first()
     if not agency:
         raise HTTPException(status_code=404, detail="Agency not found")

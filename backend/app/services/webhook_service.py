@@ -45,11 +45,49 @@ async def dispatch_event(
     except Exception as e:
         logger.error("Webhook dispatch error: %s", e)
 
+def _next_retry_at(attempt: int) -> Optional[datetime]:
+    if attempt >= MAX_RETRIES:
+        return None
+    delay = RETRY_DELAYS[min(attempt - 1, len(RETRY_DELAYS) - 1)]
+    return datetime.now(timezone.utc) + timedelta(seconds=delay)
+
+
+async def _record_delivery(
+    db: AsyncSession,
+    endpoint: WebhookEndpoint,
+    event_type: str,
+    payload: Dict[str, Any],
+    attempt: int,
+    delivery_id: Optional[UUID],
+    success: bool,
+    response_status: Optional[int] = None,
+    response_body: Optional[str] = None,
+) -> None:
+    """Create or update the delivery row. Retries update the original row so
+    a failed delivery is one row across its whole retry lifecycle — otherwise
+    the retry job re-matches stale rows forever and duplicates sends."""
+    delivery = None
+    if delivery_id is not None:
+        res = await db.execute(select(WebhookDelivery).filter(WebhookDelivery.id == delivery_id))
+        delivery = res.scalar_one_or_none()
+    if delivery is None:
+        delivery = WebhookDelivery(endpoint_id=endpoint.id, event_type=event_type, payload=payload)
+        db.add(delivery)
+
+    delivery.attempt = attempt
+    delivery.success = success
+    delivery.response_status = response_status
+    delivery.response_body = response_body
+    delivery.delivered_at = datetime.now(timezone.utc) if success else None
+    delivery.next_retry_at = None if success else _next_retry_at(attempt)
+
+
 async def _send_webhook(
     endpoint: WebhookEndpoint,
     event_type: str,
     payload: Dict[str, Any],
     attempt: int = 1,
+    delivery_id: Optional[UUID] = None,
 ) -> None:
     body = {
         "event": event_type,
@@ -69,18 +107,12 @@ async def _send_webhook(
             )
         success = 200 <= resp.status_code < 300
         async with AsyncSessionLocal() as db:
-            delivery = WebhookDelivery(
-                endpoint_id=endpoint.id,
-                event_type=event_type,
-                payload=payload,
+            await _record_delivery(
+                db, endpoint, event_type, payload, attempt, delivery_id,
+                success=success,
                 response_status=resp.status_code,
                 response_body=resp.text[:2000],
-                success=success,
-                attempt=attempt,
-                delivered_at=datetime.now(timezone.utc) if success else None,
-                next_retry_at=(datetime.now(timezone.utc) + timedelta(seconds=RETRY_DELAYS[attempt])) if not success and attempt < MAX_RETRIES else None,
             )
-            db.add(delivery)
 
             ep = await db.execute(select(WebhookEndpoint).filter(WebhookEndpoint.id == endpoint.id))
             ep = ep.scalar_one()
@@ -98,15 +130,9 @@ async def _send_webhook(
     except Exception as e:
         logger.error("Webhook send error: %s", e)
         async with AsyncSessionLocal() as db:
-            delivery = WebhookDelivery(
-                endpoint_id=endpoint.id,
-                event_type=event_type,
-                payload=payload,
-                success=False,
-                attempt=attempt,
-                next_retry_at=(datetime.now(timezone.utc) + timedelta(seconds=RETRY_DELAYS[attempt])) if attempt < MAX_RETRIES else None,
+            await _record_delivery(
+                db, endpoint, event_type, payload, attempt, delivery_id, success=False,
             )
-            db.add(delivery)
             await db.commit()
 
 async def retry_failed_deliveries() -> None:
@@ -125,7 +151,11 @@ async def retry_failed_deliveries() -> None:
             ep = ep_result.scalar_one_or_none()
             if not ep or not ep.is_active:
                 continue
-            await _send_webhook(ep, delivery.event_type, delivery.payload, delivery.attempt + 1)
+            await _send_webhook(
+                ep, delivery.event_type, delivery.payload,
+                attempt=delivery.attempt + 1,
+                delivery_id=delivery.id,
+            )
 
 async def list_endpoints(db: AsyncSession, agency_id: UUID) -> List[WebhookEndpoint]:
     result = await db.execute(

@@ -59,7 +59,11 @@ async def delete_competitor_api(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(RoleChecker(["marketing_manager"]))
 ):
-    await check_location_access(location_id, current_user, db)
+    result = await db.execute(select(Competitor).filter(Competitor.id == id))
+    competitor = result.scalar_one_or_none()
+    if not competitor:
+        raise HTTPException(status_code=404, detail="Competitor not found")
+    await check_location_access(competitor.location_id, current_user, db)
     success = await delete_competitor(db, id)
     if not success:
         raise HTTPException(status_code=404, detail="Competitor not found")

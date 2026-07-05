@@ -11,6 +11,9 @@ class SentimentResult(Base, BaseMixin):
     sentiment = Column(String(50), nullable=False) # positive, negative, neutral, mixed
     confidence = Column(Float, nullable=False)
     emotions = Column(JSON, default=list, nullable=False)
+    # Which analyzer produced this: "groq:<model>" or "keyword_fallback".
+    # Keyword output must be distinguishable from LLM output after the fact.
+    model = Column(String(100), nullable=True)
 
     # Relationships
     review = relationship("Review", back_populates="sentiment_result")

@@ -50,10 +50,10 @@ export default function BillingPage() {
       const order = res.order;
       const keyId = res.key_id;
 
-      if (order.amount === 0) {
+      if (res.activated) {
         toast.success(`${planId} plan activated!`);
-        const { data } = await api.patch("/api/billing/update", { subscription_plan: planId });
-        setStatus((prev) => prev ? { ...prev, subscription_plan: planId, subscription_status: "active", is_trial_active: true } : prev);
+        const { data: newStatus } = await billingAPI.getStatus();
+        setStatus(newStatus);
         return;
       }
 
@@ -75,12 +75,9 @@ export default function BillingPage() {
         const rzp = new (window as any).Razorpay(options);
         rzp.open();
       } else {
-        toast.success(`Mock checkout for ${planId} plan`);
-        setTimeout(async () => {
-          const { data } = await api.patch("/api/billing/update", { subscription_plan: planId, subscription_status: "active" });
-          const { data: newStatus } = await billingAPI.getStatus();
-          setStatus(newStatus);
-        }, 1500);
+        // Payment gateway not configured and server did not activate (production):
+        // surface it instead of pretending checkout happened.
+        toast.error("Payment gateway is not configured. Contact support to change your plan.");
       }
     } catch (error: any) {
       toast.error(error?.response?.data?.detail || "Checkout failed");

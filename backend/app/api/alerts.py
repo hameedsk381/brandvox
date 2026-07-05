@@ -50,7 +50,12 @@ async def resolve_alert_api(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(RoleChecker(["marketing_manager", "customer_support", "branch_manager"]))
 ):
-    await check_location_access(location_id, current_user, db)
+    from app.models.alert import CrisisAlert
+    result = await db.execute(select(CrisisAlert).filter(CrisisAlert.id == id))
+    existing = result.scalar_one_or_none()
+    if not existing:
+        raise HTTPException(status_code=404, detail="Alert not found or already resolved")
+    await check_location_access(existing.location_id, current_user, db)
     alert = await resolve_alert(db, id)
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found or already resolved")

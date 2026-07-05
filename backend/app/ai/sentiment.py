@@ -42,7 +42,8 @@ def analyze_sentiment_keyword(review_text: str) -> Dict[str, Any]:
     return {
         "sentiment": sentiment,
         "confidence": round(confidence, 2),
-        "emotions": emotions
+        "emotions": emotions,
+        "model": "keyword_fallback"
     }
 
 async def analyze_sentiment(review_text: str) -> Dict[str, Any]:
@@ -50,7 +51,8 @@ async def analyze_sentiment(review_text: str) -> Dict[str, Any]:
         return {
             "sentiment": "neutral",
             "confidence": 1.0,
-            "emotions": ["neutral"]
+            "emotions": ["neutral"],
+            "model": "empty_text"
         }
 
     groq = get_groq_client()
@@ -79,10 +81,12 @@ async def analyze_sentiment(review_text: str) -> Dict[str, Any]:
             return {
                 "sentiment": data.get("sentiment", "neutral"),
                 "confidence": data.get("confidence", 0.8),
-                "emotions": data.get("emotions", ["neutral"])
+                "emotions": data.get("emotions", ["neutral"]),
+                "model": "groq:openai/gpt-oss-120b"
             }
         except Exception as e:
             logger.error(f"Failed to parse sentiment JSON response: {e}. Raw response: {response}")
-            
-    # Fallback to mock on failure
+
+    # Keyword fallback keeps the pipeline alive on API failure, but the result
+    # is tagged so degraded output is identifiable (and re-analyzable) later.
     return analyze_sentiment_keyword(review_text)

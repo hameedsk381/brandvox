@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 from typing import List, Optional
@@ -177,6 +178,16 @@ async def remove_maps_ranking(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    from app.models.competitor import Competitor, CompetitorMapsRanking
+    result = await db.execute(select(CompetitorMapsRanking).filter(CompetitorMapsRanking.id == ranking_id))
+    ranking = result.scalar_one_or_none()
+    if not ranking:
+        raise HTTPException(status_code=404, detail="Ranking not found")
+    comp_res = await db.execute(select(Competitor).filter(Competitor.id == ranking.competitor_id))
+    comp = comp_res.scalar_one_or_none()
+    if not comp:
+        raise HTTPException(status_code=404, detail="Ranking not found")
+    await check_location_access(comp.location_id, current_user, db)
     deleted = await delete_maps_ranking(db, ranking_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Ranking not found")

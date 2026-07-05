@@ -15,10 +15,9 @@ async def get_branding(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    if current_user.role != "super_admin":
-        if current_user.agency_id and current_user.agency_id != agency_id:
-            raise HTTPException(status_code=403, detail="Unauthorized agency context")
-            
+    if current_user.role != "super_admin" and current_user.agency_id != agency_id:
+        raise HTTPException(status_code=403, detail="Unauthorized agency context")
+
     config = await get_branding_by_agency(db, agency_id)
     return config
 
@@ -29,9 +28,8 @@ async def update_agency_branding(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(RoleChecker(["agency_admin"]))
 ):
-    if current_user.role != "super_admin":
-        if current_user.agency_id and current_user.agency_id != agency_id:
-            raise HTTPException(status_code=403, detail="Unauthorized agency context")
-            
+    if current_user.role != "super_admin" and current_user.agency_id != agency_id:
+        raise HTTPException(status_code=403, detail="Unauthorized agency context")
+
     config = await update_branding(db, agency_id, req)
     return config

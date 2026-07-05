@@ -9,7 +9,7 @@ from app.services.sentiment_service import analyze_review_sentiment_and_topics
 from app.services.reply_service import check_and_apply_smart_rules
 from app.services.alert_service import detect_crisis
 from app.models.user import User
-from app.core.dependencies import get_current_active_user, RoleChecker
+from app.core.dependencies import get_current_active_user, RoleChecker, check_review_access
 
 router = APIRouter(prefix="/reviews", tags=["reviews"])
 
@@ -49,6 +49,7 @@ async def get_review(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
+    await check_review_access(id, current_user, db)
     review = await get_review_by_id(db, id)
     if not review:
         raise HTTPException(status_code=404, detail="Review not found")

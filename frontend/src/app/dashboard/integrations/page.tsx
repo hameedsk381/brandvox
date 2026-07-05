@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useTenantStore } from "@/stores/tenant-store";
@@ -51,13 +51,19 @@ export default function IntegrationsPage() {
   const [isConfigured, setIsConfigured] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [status, setStatus] = useState<GoogleIntegrationStatus | null>(null);
+  // OAuth codes are single-use; guard against React StrictMode double-firing
+  // the effect and exchanging the same code twice.
+  const callbackHandled = useRef(false);
 
   useEffect(() => {
     const code = searchParams.get("code");
     const state = searchParams.get("state");
 
     if (code && state) {
-      handleOAuthCallback(code, state);
+      if (!callbackHandled.current) {
+        callbackHandled.current = true;
+        handleOAuthCallback(code, state);
+      }
       return;
     }
 
@@ -87,10 +93,15 @@ export default function IntegrationsPage() {
   const handleOAuthCallback = async (code: string, state: string) => {
     try {
       setIsConnecting(true);
-      await api.post(`/api/integrations/google/callback?code=${code}&state=${state}`);
+      const res = await api.post(
+        `/api/integrations/google/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`
+      );
       toast.success("Google account connected");
       router.replace("/dashboard/integrations");
-      await refreshStatus(state, currentLocation?.id);
+      const clientId = res.data?.client_id || currentClient?.id;
+      if (clientId) {
+        await refreshStatus(clientId, currentLocation?.id);
+      }
     } catch (error) {
       toast.error(getErrorMessage(error, "Failed to connect Google account"));
     } finally {

@@ -172,14 +172,19 @@ async def on_startup():
     # Environment validation
     _validate_environment()
 
-    logger.info("Initializing database tables...")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("Database initialized successfully.")
-    
+    if settings.ENVIRONMENT.lower() == "production":
+        # Schema is managed exclusively by Alembic in production; create_all
+        # would mask migration drift.
+        logger.info("Production environment: skipping create_all (run 'alembic upgrade head')")
+    else:
+        logger.info("Initializing database tables...")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("Database initialized successfully.")
+
     # Start scheduler
     from app.core.scheduler import start_scheduler
-    start_scheduler()
+    await start_scheduler()
 
 
 @app.on_event("shutdown")
@@ -189,8 +194,24 @@ async def on_shutdown():
     logger.info("Application shutdown complete")
 
 
+DEFAULT_JWT_SECRET = "change-me-in-production-use-a-long-random-string"
+
+
 def _validate_environment():
-    if settings.JWT_SECRET == "change-me-in-production-use-a-long-random-string":
+    is_production = settings.ENVIRONMENT.lower() == "production"
+
+    if is_production:
+        errors = []
+        if not settings.JWT_SECRET or settings.JWT_SECRET == DEFAULT_JWT_SECRET:
+            errors.append("JWT_SECRET must be set to a strong random value in production")
+        if not settings.ENCRYPTION_KEY:
+            errors.append("ENCRYPTION_KEY must be set in production (Fernet key for OAuth token encryption)")
+        if settings.DEMO_MODE:
+            errors.append("DEMO_MODE must be disabled in production")
+        if errors:
+            raise RuntimeError("Refusing to start with insecure production config: " + "; ".join(errors))
+
+    if settings.JWT_SECRET == DEFAULT_JWT_SECRET:
         logger.warning(
             "INSECURE: JWT_SECRET is still set to the default value. "
             "Generate a strong random secret in production."

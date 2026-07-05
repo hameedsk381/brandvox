@@ -55,7 +55,8 @@ async def add_competitor(db: AsyncSession, location_id: UUID, name: str, google_
             rating=t["rating"],
             text=t["text"],
             review_date=review_date,
-            sentiment=t["sentiment"]
+            sentiment=t["sentiment"],
+            source="sample"
         )
         reviews_to_add.append(comp_review)
         
@@ -144,9 +145,21 @@ async def get_competitor_analytics(db: AsyncSession, location_id: UUID) -> Dict[
             "sentiment_distribution": comp_sent_dist
         })
         
+    # Flag whether any of the compared competitor data is seeded sample data
+    # (NULL source = legacy rows, which were always seeded). Agencies must
+    # never present template-generated numbers to a client as real intel.
+    sample_q = (
+        select(func.count(CompetitorReview.id))
+        .join(Competitor, CompetitorReview.competitor_id == Competitor.id)
+        .filter(Competitor.location_id == location_id)
+        .filter((CompetitorReview.source == "sample") | (CompetitorReview.source.is_(None)))
+    )
+    sample_count = (await db.execute(sample_q)).scalar() or 0
+
     return {
         "client": client_metrics,
-        "competitors": competitor_metrics_list
+        "competitors": competitor_metrics_list,
+        "is_sample_data": sample_count > 0
     }
 
 async def run_competitor_ai_analysis(db: AsyncSession, location_id: UUID) -> CompetitorAnalysis:
@@ -168,7 +181,16 @@ async def run_competitor_ai_analysis(db: AsyncSession, location_id: UUID) -> Com
     
     client_reviews_str = "\n".join(client_revs) if client_revs else "No reviews recorded yet."
     competitor_reviews_str = "\n".join(comp_revs) if comp_revs else "No competitor reviews recorded yet."
-    
+
+    # Is the competitor input seeded sample data? (NULL source = legacy = seeded)
+    sample_q = (
+        select(func.count(CompetitorReview.id))
+        .join(Competitor, CompetitorReview.competitor_id == Competitor.id)
+        .filter(Competitor.location_id == location_id)
+        .filter((CompetitorReview.source == "sample") | (CompetitorReview.source.is_(None)))
+    )
+    is_sample_input = ((await db.execute(sample_q)).scalar() or 0) > 0
+
     # 3. Formulate AI Analysis
     groq = get_groq_client()
     
@@ -213,8 +235,13 @@ async def run_competitor_ai_analysis(db: AsyncSession, location_id: UUID) -> Com
                 logger.error(f"Failed to parse competitor analysis JSON: {e}")
                 
     if not analysis_data:
-        # Fallback to local heuristic / mock response
-        # Create smart mock details based on review content
+        # The heuristic below fabricates plausible-sounding analysis from
+        # nothing — acceptable as a dev/demo placeholder, never in production.
+        from app.config import get_settings
+        _settings = get_settings()
+        if not _settings.DEMO_MODE and _settings.ENVIRONMENT == "production":
+            raise ValueError("AI competitor analysis is unavailable right now; please try again later.")
+
         has_pricing_complaints = "price" in competitor_reviews_str.lower() or "charge" in competitor_reviews_str.lower()
         has_waiting_complaints = "wait" in competitor_reviews_str.lower() or "slow" in competitor_reviews_str.lower()
         
@@ -234,9 +261,14 @@ async def run_competitor_ai_analysis(db: AsyncSession, location_id: UUID) -> Com
             "strengths": strengths,
             "weaknesses": weaknesses,
             "opportunities": opportunities,
-            "summary": "Our business retains high customer loyalty due to exceptional service, while local competitors suffer from wait-time bottlenecks and service inconsistency."
+            "summary": "[Placeholder analysis — AI was unavailable] Our business retains high customer loyalty due to exceptional service, while local competitors suffer from wait-time bottlenecks and service inconsistency."
         }
-        
+
+    # Label analyses built on seeded sample reviews so the disclaimer travels
+    # with the stored record into every UI and exported report.
+    if is_sample_input and not str(analysis_data.get("summary", "")).startswith("[Sample data]"):
+        analysis_data["summary"] = "[Sample data — competitor reviews are illustrative templates, not real data] " + str(analysis_data.get("summary", ""))
+
     # 4. Save analysis to database
     today = date.today()
     

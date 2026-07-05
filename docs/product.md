@@ -1,7 +1,8 @@
 # ReputationOS AI — Product Document
 
 > AI-Powered Brand Reputation Intelligence Platform  
-> Version 1.0.0 — All 5 roadmap phases complete
+> Version 1.1.0 — 2026-07-03. Feature reference only; for readiness status see `product-roadmap.md` v2.0
+> (built & security-hardened, pre-revenue; Phase 5 features frozen pending customer validation)
 
 ---
 
@@ -62,7 +63,7 @@ ReputationOS AI is a multi-tenant SaaS platform that helps marketing agencies an
 
 | Feature | Details |
 |---|---|
-| Google Review Ingestion | OAuth 2.0 via Google Business Profile API; automatic hourly sync; exponential backoff on failure (`min(2^failures, 24h)`); per-location 120s timeout |
+| Google Review Ingestion | OAuth 2.0 (CSRF-protected signed state) via Google Business Profile APIs (Account Mgmt v1, Business Info v1, My Business v4 for reviews); automatic hourly sync, incremental by updateTime; upserts review edits; mirrors owner replies posted on Google; skips unknown ratings; exponential backoff on failure (`min(2^failures, 24h)`); per-location 120s timeout |
 | Manual Review Import | Create reviews manually via API/UI |
 | Review Inbox | List, filter (rating, sentiment, source, reply status, date), search, detail view |
 | Saved Views | Zustand + localStorage persisted filter presets; create, load, delete |
@@ -94,7 +95,7 @@ ReputationOS AI is a multi-tenant SaaS platform that helps marketing agencies an
 | Competitor CRUD | Add/remove competitors per location |
 | Comparative Analytics | Side-by-side rating, review count, sentiment distribution |
 | AI SWOT Analysis | Groq-powered strengths, weaknesses, opportunities, executive summary |
-| Mock Review Data | 12 seeded review templates for benchmarking |
+| Sample Review Data | 12 seeded review templates for benchmarking — **labeled as sample data** end-to-end (`is_sample_data` API flag, UI banner, `[Sample data]` prefix in stored SWOT summaries) until a real competitor data source is wired; heuristic SWOT fallback disabled in production |
 
 ### 3.5 Forecasting
 
@@ -161,7 +162,16 @@ ReputationOS AI is a multi-tenant SaaS platform that helps marketing agencies an
 | Pro | $49/mo | Unlimited locations, advanced AI Copilot, competitor & forecasting, custom branding, priority support, API access, webhooks |
 | Enterprise | Custom | Everything in Pro, SSO/SAML, dedicated support, custom SLA |
 
-### 3.12 White-Label & Multi-Tenant
+### 3.12 Review Generation (Campaigns)
+
+| Feature | Details |
+|---|---|
+| Campaigns | SMS / email / WhatsApp review-request campaigns per location (Twilio + SendGrid; providers must be configured and consent/opt-out compliance handled before selling) |
+| Public Review Funnel | `/review-funnel` landing page — **compliant, non-gating** (2026-07-05): every rating gets the identical next step (public Google review option plus optional private feedback); rating-based routing is prohibited by Google review policy and the FTC review rule and must not be reintroduced |
+| QR Codes | Per-campaign QR code generation |
+| Employee Leaderboard | Conversion tracking per employee with 30-day leaderboard |
+
+### 3.13 White-Label & Multi-Tenant
 
 | Feature | Details |
 |---|---|
@@ -188,8 +198,9 @@ ReputationOS AI is a multi-tenant SaaS platform that helps marketing agencies an
 | Mechanism | Details |
 |---|---|
 | RBAC | 7 roles (super_admin 100 → read_only 10) |
-| Scope Checks | `check_location_access()`, `verify_client_access()` per endpoint |
+| Scope Checks | `check_location_access()`, `verify_client_access()`, `check_review_access()` per endpoint; full tenant-isolation audit completed July 2026 with regression tests |
 | Subscription Gate | `SubscriptionRequired` dependency on all 18 data routers |
+| OAuth CSRF | Signed 10-min JWT state tokens on the Google connect flow |
 
 ### Data Protection
 
@@ -197,7 +208,8 @@ ReputationOS AI is a multi-tenant SaaS platform that helps marketing agencies an
 |---|---|
 | Encryption in Transit | HSTS, restricted CORS, HTTPS recommended |
 | Security Headers | HSTS, X-Content-Type-Options, X-Frame-Options, X-XSS-Protection, Referrer-Policy, Permissions-Policy |
-| Encryption at Rest | PostgreSQL (no column-level); bcrypt for passwords |
+| Encryption at Rest | Google OAuth tokens + agency client secrets Fernet-encrypted (column-level, `ENCRYPTION_KEY`); bcrypt for passwords; general PII unencrypted |
+| Startup Guards | Production boot refused with default JWT_SECRET, missing ENCRYPTION_KEY, or DEMO_MODE enabled |
 | Audit Logging | Login, password change, approve/reject reply, smart rules changes; 90-day retention; daily purge |
 | GDPR Export | JSON export of all user data (`/api/users/me/export`) |
 | Account Deletion | Anonymization (`/api/users/me/delete`) |
@@ -304,6 +316,11 @@ When Groq API key is missing or set to placeholder `"your-..."`:
 - Forecasting: reasonable default values
 - Competitor analysis: keyword-based SWOT generation
 
+**Google data is different:** Google API failures raise errors and surface in the UI
+(`google_api_error`). Mock review/location data is only generated when `DEMO_MODE=true`
+(never allowed in production — startup guard) or in the explicit `test-client-id` test mode.
+Review data is never silently fabricated for real tenants.
+
 ### Rate Limits & Caching
 
 | Feature | Cache | Purpose |
@@ -317,9 +334,12 @@ When Groq API key is missing or set to placeholder `"your-..."`:
 
 ## 8. Scheduled Jobs (APScheduler)
 
+A PostgreSQL advisory lock ensures only one process runs jobs when multiple workers/replicas
+are deployed; `ENABLE_SCHEDULER=false` opts a replica out explicitly.
+
 | Job | Interval | Description |
 |---|---|---|
-| `sync_google_reviews` | Every 1 hour | Fetch new reviews for all mapped locations; concurrency guard; 120s per-location timeout |
+| `sync_google_reviews` | Every 1 hour | Incremental fetch of new/edited reviews for all mapped locations; upserts edits; concurrency guard; 120s per-location timeout |
 | `process_scheduled_reports` | Every 5 minutes | Check for due scheduled reports; generate PDF/Excel/PPTX; advance next_run_at |
 | `cleanup_old_audit_logs` | Daily | Delete audit logs older than 90 days (configurable) |
 | `retry_webhook_deliveries` | Every 5 minutes | Retry failed webhook deliveries up to 3 attempts |
@@ -381,8 +401,12 @@ docker compose up -d
 ### Environment Variables (`.env`)
 ```env
 DATABASE_URL=postgresql+asyncpg://repuser:reppass@postgres:5432/reputationos
+ENVIRONMENT=development            # "production" enforces startup security guards
 JWT_SECRET=<generate-strong-random-secret>
 JWT_EXPIRY_HOURS=24
+ENCRYPTION_KEY=<fernet-key>        # required in production; python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+DEMO_MODE=false                    # mock Google data fallback; never true in production
+ENABLE_SCHEDULER=true              # advisory lock also dedupes across replicas
 GROQ_API_KEY=<your-groq-api-key>
 FRONTEND_URL=http://localhost:3000
 BACKEND_CORS_ORIGINS=["http://localhost:3000"]
@@ -416,15 +440,16 @@ docker compose up -d
 
 ## 11. Known Gaps & Deferred Items
 
-| Item | Reason |
+| Item | Status / Reason |
 |---|---|
-| Automated backup verification | Infra/ops responsibility |
-| Penetration testing schedule | Operational, not product |
+| Backup and restore process | **Open — blocker before first paying customer** (roadmap Phase 6) |
+| External penetration test / security review | Open — SOC 2 posture is self-assessed until done |
 | Formal incident response plan | Organizational, not product |
 | Vendor security assessment | Procurement process |
 | Data classification policy | Governance documentation |
-| Column-level encryption for PII | Performance trade-off |
-| Token revocation (blacklist) | Stateless JWT design choice |
+| Column-level encryption | Done for OAuth tokens/secrets (July 2026); general PII fields remain unencrypted |
+| Token revocation (blacklist) | Stateless JWT design choice; JWTs in localStorage (httpOnly cookies would be safer) |
+| GBP API quota approval | Each agency's Google Cloud project starts at quota 0 until Google approves access — onboarding dependency |
 | Industry-specific workflows | Deferred beyond v1 scope |
 | Multi-AI-provider support | Keep simple for v1 |
 | Complex enterprise procurement | Future phase |
@@ -432,6 +457,9 @@ docker compose up -d
 ---
 
 ## 12. KPIs & Success Metrics
+
+> Current measured values live in the KPI scoreboard in `product-roadmap.md` §6 (updated monthly).
+> As of 2026-07-03 all metrics below are at zero or not yet instrumented.
 
 ### Acquisition
 - Trial-to-active conversion rate

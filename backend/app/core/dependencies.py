@@ -198,6 +198,20 @@ async def check_location_access(location_id: UUID, current_user: User, db: Async
     raise HTTPException(status_code=403, detail="Unauthorized role")
 
 
+async def check_review_access(review_id: UUID, current_user: User, db: AsyncSession):
+    """Verify the current user has access to a review via its location.
+    Returns the Review or raises 403/404."""
+    from app.models.review import Review
+
+    result = await db.execute(select(Review).filter(Review.id == review_id))
+    review = result.scalar_one_or_none()
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+
+    await check_location_access(review.location_id, current_user, db)
+    return review
+
+
 async def verify_client_access(client_id: UUID, current_user: User, db: AsyncSession) -> None:
     """Verify the current user has access to a client. Raises 403 if not."""
     from app.models.tenant import Client

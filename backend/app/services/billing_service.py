@@ -45,20 +45,22 @@ class BillingService:
         order["plan_id"] = plan_id
         return order
 
-    async def handle_webhook(self, db: AsyncSession, payload: Dict[str, Any], signature: Optional[str] = None) -> None:
-        if signature and self.key_secret:
-            expected_sig = hmac.new(
-                self.key_secret.encode(),
-                payload.get("body", "").encode() if isinstance(payload.get("body"), str) else str(payload).encode(),
-                hashlib.sha256,
-            ).hexdigest()
-            if not hmac.compare_digest(expected_sig, signature):
-                return
+    def verify_webhook_signature(self, raw_body: bytes, signature: Optional[str]) -> bool:
+        """Razorpay signs the raw request body with HMAC-SHA256 (hex) using the
+        webhook secret. This webhook grants subscriptions, so unsigned or
+        unverifiable requests must be rejected — never processed on trust."""
+        current = get_settings()
+        secret = current.RAZORPAY_WEBHOOK_SECRET or current.RAZORPAY_KEY_SECRET
+        if not secret or not signature:
+            return False
+        expected_sig = hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(expected_sig, signature)
 
+    async def handle_webhook(self, db: AsyncSession, payload: Dict[str, Any]) -> None:
         event = payload.get("event", "")
         if event == "payment.captured":
-            notes = (payload.get("payload", {}).get("payment", {}).get("entity", {}).get("notes", {}) or
-                     payload.get("notes", {}))
+            # Only the real Razorpay event shape; no top-level fallbacks.
+            notes = payload.get("payload", {}).get("payment", {}).get("entity", {}).get("notes", {}) or {}
             agency_id = notes.get("agency_id")
             plan_id = notes.get("plan", "starter")
             if agency_id:

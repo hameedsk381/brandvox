@@ -8,6 +8,7 @@ interface Props {
 }
 
 export default function ReputationScoreCard({ score }: Props) {
+  const hasData = score != null;
   const s = score ?? 0;
   const radius = 70;
   const circumference = 2 * Math.PI * radius;
@@ -43,12 +44,12 @@ export default function ReputationScoreCard({ score }: Props) {
             />
           </svg>
           <div className="absolute flex flex-col items-center">
-            <span className="text-4xl font-semibold text-foreground tracking-tight">{Math.round(s)}</span>
+            <span className="text-4xl font-semibold text-foreground tracking-tight">{hasData ? Math.round(s) : "--"}</span>
             <span className="text-xs text-muted-foreground">/ 100</span>
           </div>
         </div>
         <p className="text-xs text-muted-foreground mt-3">
-          {s >= 80 ? "Excellent" : s >= 60 ? "Good" : s >= 40 ? "Needs Work" : "Critical"}
+          {!hasData ? "No reviews yet" : s >= 80 ? "Excellent" : s >= 60 ? "Good" : s >= 40 ? "Needs Work" : "Critical"}
         </p>
       </CardContent>
     </Card>

@@ -14,7 +14,7 @@ from app.schemas.scheduled_report import (
     ScheduledReportUpdate,
     ScheduledReportResponse,
 )
-from app.core.dependencies import get_current_active_user
+from app.core.dependencies import get_current_active_user, verify_client_access, check_location_access
 
 router = APIRouter(prefix="/reports/scheduled", tags=["reports"])
 
@@ -39,6 +39,11 @@ async def create_scheduled_report(
 ):
     if not current_user.agency_id:
         raise HTTPException(status_code=400, detail="User must belong to an agency to schedule reports")
+
+    if req.client_id:
+        await verify_client_access(UUID(req.client_id), current_user, db)
+    if req.location_id:
+        await check_location_access(UUID(req.location_id), current_user, db)
 
     report = ScheduledReport(
         agency_id=current_user.agency_id,

@@ -1,5 +1,12 @@
 # ReputationOS AI -- Independent Product Review
 
+> **Status note (2026-07-03):** point-in-time external review; kept for reference. Two scores
+> have moved since it was written: the July 2026 hardening pass fixed 13 tenant-isolation holes,
+> added OAuth CSRF protection, and encrypted credentials at rest (the "Technical Architecture 9.5"
+> predates those bugs being known); and `product-roadmap.md` v2.0 now addresses the go-to-market
+> gap this review identified (Phase 6: first revenue, restaurant-agency wedge). The core critique —
+> strong engineering, weak positioning — remains valid until Phase 6 is executed.
+
 **Reviewer Perspective:** Entrepreneur with expertise in branding,
 digital marketing, SaaS product strategy, and business problem solving.
 

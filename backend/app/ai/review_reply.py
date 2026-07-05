@@ -69,11 +69,18 @@ async def generate_reply(
     industry: str,
     author_name: Optional[str] = None
 ) -> List[Dict[str, Any]]:
+    from app.config import get_settings
+
     groq = get_groq_client()
-    
-    # If API not configured, use mock
+    settings = get_settings()
+
+    # Canned templates are a dev/demo convenience only. In production without
+    # DEMO_MODE they must never be presented (or auto-published) as AI output.
     if not groq.client:
-        return _mock_reply_generation(review_text, rating, brand_voice, business_name, author_name)
+        if settings.DEMO_MODE or settings.ENVIRONMENT != "production":
+            return _mock_reply_generation(review_text, rating, brand_voice, business_name, author_name)
+        logger.error("Groq API not configured in production; refusing to generate template replies")
+        return []
 
     messages = [
         {"role": "system", "content": REPLY_SYSTEM_PROMPT},
@@ -112,5 +119,9 @@ async def generate_reply(
             return replies
         except Exception as e:
             logger.error(f"Failed to parse reply JSON response: {e}. Raw response: {response}")
-            
-    return _mock_reply_generation(review_text, rating, brand_voice, business_name, author_name)
+
+    # A real API failure must fail visibly (callers treat [] as an error and
+    # keep the review in the manual queue) — not silently degrade to templates.
+    if settings.DEMO_MODE:
+        return _mock_reply_generation(review_text, rating, brand_voice, business_name, author_name)
+    return []

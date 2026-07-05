@@ -33,6 +33,7 @@ class GoogleIntegrationStatusResponse(BaseModel):
 class GoogleSyncResponse(BaseModel):
     status: str
     imported_reviews: int
+    updated_reviews: int = 0
     skipped_reviews: int
     synced_location_id: str
     google_location_id: str

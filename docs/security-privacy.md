@@ -1,5 +1,7 @@
 # Security & Privacy — ReputationOS AI
 
+> Last updated: 2026-07-03 (post security-hardening pass)
+
 ## Authentication
 
 ### Password Policy
@@ -42,14 +44,35 @@
 ### Scope Enforcement
 - `check_location_access()` — verifies user can access a Location by role hierarchy and tenant linkage
 - `verify_client_access()` — analogous for Client-level access
+- `check_review_access()` — resolves a Review through its Location to enforce the same chain
 - All endpoints are scoped; super_admin bypasses all checks
+- **July 2026 audit:** 13 cross-tenant access holes were found and fixed across by-ID endpoints
+  (reviews, replies, brand voice, smart rules, competitors, alerts, SEO rankings, support tickets,
+  scheduled reports, chat agent location context, location creation). Regression coverage lives in
+  `tests/test_tenant_isolation.py`.
+
+### OAuth Flow Security (Google Business Profile)
+- `state` parameter is a signed JWT (10-minute expiry, nonce, purpose claim) — CSRF-protected;
+  forged or raw-client-id states are rejected with 400
+- Missing refresh token at connect time fails loudly; no sentinel values are stored
+- Per-agency OAuth credentials: each agency uses its own Google Cloud project
 
 ## Data Protection
 
 ### Encryption at Rest
-- Database: PostgreSQL (no additional column-level encryption currently)
 - Passwords: bcrypt hashing
-- Secret fields (JWT_SECRET, Google OAuth tokens): stored in env vars / database; no application-level encryption
+- Google OAuth access/refresh tokens and agency OAuth client secrets: **Fernet-encrypted at the
+  column level** (`app/core/crypto.py`, `EncryptedToken` type, `enc:v1:` prefix). Key comes from
+  `ENCRYPTION_KEY`; legacy plaintext rows remain readable and re-encrypt on next save
+- Key management: `ENCRYPTION_KEY` is required in production (startup guard); development derives
+  a key from `JWT_SECRET`
+- Other PII columns (emails, names, review text): stored unencrypted in PostgreSQL
+
+### Production Startup Guards
+The application refuses to start with `ENVIRONMENT=production` if any of:
+- `JWT_SECRET` is missing or still the shipped default
+- `ENCRYPTION_KEY` is not set
+- `DEMO_MODE` is enabled (mock-data fallback must never run for real tenants)
 
 ### Encryption in Transit
 - HSTS: `Strict-Transport-Security: max-age=31536000; includeSubDomains`
@@ -101,18 +124,21 @@
 ### Current Controls
 | Category | Status |
 |---|---|
-| Access Control | RBAC with 7 roles, scope enforcement, active subscription gating |
-| Authentication | Password policy, MFA (admin), rate limiting |
+| Access Control | RBAC with 7 roles, scope enforcement (audited July 2026), active subscription gating |
+| Authentication | Password policy, MFA (admin), rate limiting, OAuth CSRF protection |
 | Audit Logging | User login and password changes logged |
 | Encryption in Transit | HSTS, HTTPS recommended |
+| Encryption at Rest | OAuth tokens and client secrets (Fernet); passwords (bcrypt) |
 | Data Retention | Audit logs purged after 90 days |
+| Deployment Safety | Production startup guards; advisory-locked scheduler; Alembic-only schema in prod |
 | Incident Response | Application-level exception handling, structured logging |
 
 ### Gaps
-- No automated backup verification
-- No penetration testing schedule
+- No automated backup and restore process (blocker before first paying customer — see roadmap Phase 6)
+- No external penetration test or security review (SOC 2 posture is self-assessed)
 - No formal security incident response plan
 - No vendor security assessment
 - No data classification policy
-- No encryption at rest for PII fields
-- No session revocation (token blacklist)
+- No encryption at rest for general PII fields (emails, names, review text)
+- No session revocation (token blacklist); stateless 24h JWTs
+- JWTs stored in browser localStorage (XSS-exfiltratable; httpOnly cookies would be safer)

@@ -31,7 +31,7 @@ async def calculate_reputation_score(
         score = ReputationScore(
             location_id=location_id,
             score_date=score_date,
-            overall_score=70.0, # Default starting score
+            overall_score=0.0,  # honest: no data, no score
             avg_rating=0.0,
             review_volume=0,
             sentiment_score=0.5,
@@ -204,10 +204,12 @@ async def get_dashboard_data(
     neg_count = sent_dist["negative"]
     sentiment_score = (pos_count / (pos_count + neg_count)) if (pos_count + neg_count) > 0 else 0.5
     
-    rep_score = (avg_rating / 5.0) * 40.0 + response_rate * 30.0 + sentiment_score * 30.0
-    rep_score = round(rep_score * 10, 1) # out of 100
-    if rep_score == 0:
-        rep_score = 75.0 # Starting mock default
+    # Weighted 0-100: rating 40%, response rate 30%, sentiment 30%.
+    # No reviews means no score — never a fabricated default.
+    if total_reviews > 0:
+        rep_score = round((avg_rating / 5.0) * 40.0 + response_rate * 30.0 + sentiment_score * 30.0, 1)
+    else:
+        rep_score = None
         
     # 6. Rating Trend (Last 30 days)
     # Aggregate counts and average rating per day
@@ -433,13 +435,34 @@ async def get_dashboard_data(
             "target_url": "/reviews"
         })
         
+    # Review growth: last 30 days vs the 30 days before that. 0.0 when there
+    # is no prior-period data — never a seeded placeholder.
+    now_dt = datetime.utcnow()
+    cur_start = now_dt - timedelta(days=30)
+    prev_start = now_dt - timedelta(days=60)
+
+    def _count_between(start, end):
+        if location_id:
+            q = select(func.count(Review.id)).filter(Review.location_id == location_id)
+        elif client_id:
+            q = select(func.count(Review.id)).join(Location).filter(Location.client_id == client_id)
+        elif agency_id:
+            q = select(func.count(Review.id)).join(Location).join(Client).filter(Client.agency_id == agency_id)
+        else:
+            q = select(func.count(Review.id))
+        return q.filter(Review.review_date >= start, Review.review_date < end)
+
+    cur_count = (await db.execute(_count_between(cur_start, now_dt))).scalar() or 0
+    prev_count = (await db.execute(_count_between(prev_start, cur_start))).scalar() or 0
+    review_growth = round(((cur_count - prev_count) / prev_count) * 100, 1) if prev_count > 0 else 0.0
+
     return {
-        "reputation_score": round(rep_score, 1),
+        "reputation_score": rep_score,
         "avg_rating": round(avg_rating, 2),
         "total_reviews": total_reviews,
         "response_rate": round(response_rate, 2),
         "sentiment_score": round(sentiment_score, 2),
-        "review_growth": 14.5, # Seeded delta
+        "review_growth": review_growth,
         "rating_trend": rating_trend,
         "sentiment_distribution": sent_dist,
         "recent_reviews": recent_reviews,

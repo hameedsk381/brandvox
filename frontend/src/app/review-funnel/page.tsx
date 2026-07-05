@@ -6,30 +6,37 @@ import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 
+// Compliance note: every rating gets the SAME next step. Google's review
+// policies and the FTC's review rule prohibit "review gating" — selectively
+// steering happy customers to Google while diverting unhappy ones to a
+// private form. Do not reintroduce rating-based branching here.
 function FunnelContent() {
   const searchParams = useSearchParams();
   const contactId = searchParams.get("contact_id");
   const businessName = searchParams.get("business") || "our business";
-  const [step, setStep] = useState<"rating" | "happy" | "feedback" | "done">("rating");
+  const reviewUrl = searchParams.get("review_url");
+  const [step, setStep] = useState<"rating" | "share" | "done">("rating");
+  const [rating, setRating] = useState<number | null>(null);
   const [feedbackText, setFeedbackText] = useState("");
 
-  const handleRating = async (rating: number) => {
-    if (rating >= 4) {
-      setStep("happy");
-    } else {
-      setStep("feedback");
-    }
+  const handleRating = (value: number) => {
+    setRating(value);
+    setStep("share");
   };
 
-  const handleSubmitFeedback = async () => {
+  const submitFeedback = async (text: string) => {
     if (contactId) {
       try {
         await api.post("/api/campaigns/funnel/feedback", {
           contact_id: contactId,
-          feedback_text: feedbackText,
+          feedback_text: rating != null ? `Rated ${rating}/5. ${text}` : text,
         });
       } catch {}
     }
+  };
+
+  const handleSubmitFeedback = async () => {
+    await submitFeedback(feedbackText);
     setStep("done");
   };
 
@@ -71,39 +78,40 @@ function FunnelContent() {
             </div>
           )}
 
-          {step === "happy" && (
-            <div className="flex flex-col items-center gap-4 text-center">
-              <p className="text-emerald-400 text-lg">We're glad you had a great experience!</p>
-              <p className="text-sm text-muted-foreground">Would you mind sharing your feedback on Google?</p>
-              <a
-                href={searchParams.get("review_url") || "https://g.page/r/CvFnP4d4M2r7EBM/review"}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => {
-                  if (contactId) {
-                    api.post("/api/campaigns/funnel/feedback", {
-                      contact_id: contactId,
-                      feedback_text: "Left a Google review",
-                    }).catch(() => {});
-                  }
-                  setStep("done");
-                }}
-              >
-                <Button className="text-lg px-8 py-4">Leave a Google Review</Button>
-              </a>
-            </div>
-          )}
+          {step === "share" && (
+            <div className="flex flex-col items-center gap-4 w-full text-center">
+              <p className="text-sm text-muted-foreground">
+                Thanks for rating us! We&apos;d love to hear more about your experience.
+              </p>
 
-          {step === "feedback" && (
-            <div className="flex flex-col items-center gap-4 w-full">
-              <p className="text-sm text-muted-foreground">We're sorry your experience wasn't great. Tell us how we can improve.</p>
-              <textarea
-                className="w-full min-h-[120px] bg-background border border-border rounded-lg p-3 text-sm"
-                placeholder="Your feedback helps us get better..."
-                value={feedbackText}
-                onChange={(e) => setFeedbackText(e.target.value)}
-              />
-              <Button onClick={handleSubmitFeedback} disabled={!feedbackText.trim()}>Submit Feedback</Button>
+              {reviewUrl && (
+                <a
+                  href={reviewUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => {
+                    submitFeedback("Opened Google review link");
+                    setStep("done");
+                  }}
+                >
+                  <Button className="text-lg px-8 py-4">Share on Google</Button>
+                </a>
+              )}
+
+              <div className="flex flex-col items-center gap-3 w-full">
+                <p className="text-xs text-muted-foreground">
+                  {reviewUrl ? "You can also send us a note directly:" : "Tell us about your experience:"}
+                </p>
+                <textarea
+                  className="w-full min-h-[120px] bg-background border border-border rounded-lg p-3 text-sm"
+                  placeholder="Your feedback helps us get better..."
+                  value={feedbackText}
+                  onChange={(e) => setFeedbackText(e.target.value)}
+                />
+                <Button onClick={handleSubmitFeedback} disabled={!feedbackText.trim()}>
+                  Submit Feedback
+                </Button>
+              </div>
             </div>
           )}
         </CardContent>

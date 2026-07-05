@@ -124,7 +124,14 @@ async def update_ticket(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(SupportTicket).filter(SupportTicket.id == ticket_id))
+    if not current_user.agency_id:
+        raise HTTPException(status_code=400, detail="No agency associated")
+    result = await db.execute(
+        select(SupportTicket).filter(
+            SupportTicket.id == ticket_id,
+            SupportTicket.agency_id == current_user.agency_id,
+        )
+    )
     ticket = result.scalar_one_or_none()
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")

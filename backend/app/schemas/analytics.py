@@ -37,7 +37,7 @@ class RecommendationItem(BaseModel):
     target_url: Optional[str] = None
 
 class DashboardResponse(BaseModel):
-    reputation_score: float
+    reputation_score: Optional[float] = None  # None when the tenant has no reviews yet
     avg_rating: float
     total_reviews: int
     response_rate: float
@@ -54,3 +54,14 @@ class SentimentBreakdownResponse(BaseModel):
     emotions: Dict[str, int]
     source_distribution: Dict[str, Dict[str, int]] # source -> {positive, negative, etc.}
     location_distribution: Dict[str, Dict[str, int]] # location -> {positive, negative, etc.}
+
+class ActivationResponse(BaseModel):
+    """Activation KPIs for one agency (roadmap Phase 6 scoreboard)."""
+    agency_id: UUID
+    agency_name: str
+    account_created_at: datetime
+    google_connected_at: Optional[datetime] = None
+    first_synced_at: Optional[datetime] = None
+    first_ai_reply_at: Optional[datetime] = None
+    seconds_to_first_sync: Optional[float] = None      # from account creation
+    seconds_to_first_ai_reply: Optional[float] = None  # from account creation

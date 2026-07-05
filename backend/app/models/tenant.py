@@ -1,6 +1,7 @@
 from sqlalchemy import Column, String, ForeignKey, Boolean, JSON, DateTime
 from sqlalchemy.orm import relationship
 from sqlalchemy import Uuid as UUID
+from app.core.crypto import EncryptedToken
 from app.database import Base
 from app.models.base import BaseMixin
 
@@ -11,13 +12,17 @@ class Agency(Base, BaseMixin):
     slug = Column(String(100), unique=True, nullable=False)
     settings = Column(JSON, default=dict, nullable=False)
     google_oauth_client_id = Column(String(255), nullable=True)
-    google_oauth_client_secret = Column(String(255), nullable=True)
+    google_oauth_client_secret = Column(EncryptedToken, nullable=True)
     
     # Billing & Subscriptions
     razorpay_customer_id = Column(String(255), nullable=True)
     subscription_plan = Column(String(50), default="trial", nullable=False)
     subscription_status = Column(String(50), default="active", nullable=False)
     trial_ends_at = Column(DateTime, nullable=True)
+
+    # Activation KPIs (roadmap Phase 6): stamped once on first occurrence, never overwritten
+    first_synced_at = Column(DateTime, nullable=True)
+    first_ai_reply_at = Column(DateTime, nullable=True)
 
     # Relationships
     branding_config = relationship("BrandingConfig", back_populates="agency", uselist=False, cascade="all, delete-orphan")

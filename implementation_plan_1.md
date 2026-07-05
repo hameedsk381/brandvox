@@ -1,5 +1,10 @@
 # ReputationOS AI — Implementation Plan (POC)
 
+> **Historical document (banner added 2026-07-03):** original pre-build POC plan, kept for reference.
+> The shipped product diverged in places (AI model is `openai/gpt-oss-120b`, not Llama 3.3 70B).
+> Current architecture: `docs/knowledge-graph.md`. Current status: `docs/product-roadmap.md` v2.0.
+> Note: `implementation_plan_1.md` is an identical duplicate of `implementation_plan.md`.
+
 AI-Powered Brand Reputation Intelligence Platform — lightweight POC build with a simplified tech stack, demo data seeding, and white-label branding support.
 
 ---

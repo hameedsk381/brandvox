@@ -5,7 +5,7 @@ from app.database import get_db
 from app.schemas.brand_voice import BrandVoiceProfileResponse, BrandVoiceProfileUpdate
 from app.services.reply_service import get_brand_voice_for_client
 from app.models.user import User
-from app.core.dependencies import get_current_active_user, RoleChecker
+from app.core.dependencies import get_current_active_user, RoleChecker, verify_client_access
 
 router = APIRouter(prefix="/brand-voice", tags=["settings"])
 
@@ -15,11 +15,8 @@ async def get_brand_voice(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    # Verify user access
-    if current_user.role != "super_admin":
-        if current_user.client_id and current_user.client_id != client_id:
-            raise HTTPException(status_code=403, detail="Unauthorized client voice context")
-            
+    await verify_client_access(client_id, current_user, db)
+
     profile = await get_brand_voice_for_client(db, client_id)
     return profile
 
@@ -30,12 +27,10 @@ async def update_brand_voice(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(RoleChecker(["marketing_manager"]))
 ):
-    if current_user.role != "super_admin":
-        if current_user.client_id and current_user.client_id != client_id:
-            raise HTTPException(status_code=403, detail="Unauthorized client voice context")
-            
+    await verify_client_access(client_id, current_user, db)
+
     profile = await get_brand_voice_for_client(db, client_id)
-    
+
     update_data = req.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(profile, key, value)

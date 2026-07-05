@@ -12,7 +12,7 @@ from app.schemas.tenant import (
 )
 from app.models.tenant import Agency, Client, Location, BrandingConfig
 from app.models.user import User
-from app.core.dependencies import get_current_active_user, RoleChecker
+from app.core.dependencies import get_current_active_user, RoleChecker, verify_client_access
 from app.services.billing_service import billing_service
 
 router = APIRouter(tags=["tenants"])
@@ -154,10 +154,8 @@ async def create_location(
     current_user: User = Depends(RoleChecker(["client_admin"]))
 ):
     # Verify user manages this client
-    if current_user.role != "super_admin":
-        if current_user.client_id and current_user.client_id != req.client_id:
-            raise HTTPException(status_code=403, detail="Unauthorized client context")
-            
+    await verify_client_access(req.client_id, current_user, db)
+
     location = Location(
         client_id=req.client_id,
         name=req.name,

@@ -4,15 +4,20 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import get_settings
 from app.models.integration import GoogleIntegration
-from app.models.review import Review
+from app.models.review import Review, ReviewReply
 from app.models.tenant import Agency, Client, Location
 
 logger = logging.getLogger(__name__)
+
+
+def _demo_mode_enabled() -> bool:
+    return get_settings().DEMO_MODE
 
 GOOGLE_ACCOUNT_MANAGEMENT_BASE_URL = "https://mybusinessaccountmanagement.googleapis.com/v1"
 GOOGLE_BUSINESS_INFORMATION_BASE_URL = "https://mybusinessbusinessinformation.googleapis.com/v1"
@@ -297,7 +302,9 @@ async def list_google_locations_for_client(
     try:
         accounts = await fetch_google_accounts(agency, integration)
     except ValueError:
-        logger.warning("Failed to fetch Google accounts, falling back to mock locations")
+        if not _demo_mode_enabled():
+            raise
+        logger.warning("DEMO_MODE: failed to fetch Google accounts, falling back to mock locations")
         return _build_mock_locations(client)
 
     location_options: List[Dict[str, str]] = []
@@ -313,7 +320,9 @@ async def list_google_locations_for_client(
         try:
             locations = await fetch_google_locations(agency, integration, account_name)
         except ValueError:
-            logger.warning("Failed to fetch Google locations for %s, falling back to mock", account_name)
+            if not _demo_mode_enabled():
+                raise
+            logger.warning("DEMO_MODE: failed to fetch Google locations for %s, falling back to mock", account_name)
             return _build_mock_locations(client)
 
         for location in locations:
@@ -331,7 +340,7 @@ async def list_google_locations_for_client(
         integration.google_account_id = primary_account_name
         await db.commit()
 
-    if not location_options:
+    if not location_options and _demo_mode_enabled():
         return _build_mock_locations(client)
 
     return location_options
@@ -345,7 +354,9 @@ def _normalize_google_review_parent(google_location_id: str) -> str:
     raise ValueError("Invalid Google location mapping")
 
 
-def _parse_google_star_rating(value: Optional[str]) -> int:
+def _parse_google_star_rating(value: Optional[str]) -> Optional[int]:
+    """Return the numeric rating, or None when unknown. Never guess a default:
+    a fabricated rating corrupts reputation analytics."""
     star_map = {
         "ONE": 1,
         "TWO": 2,
@@ -353,12 +364,27 @@ def _parse_google_star_rating(value: Optional[str]) -> int:
         "FOUR": 4,
         "FIVE": 5,
     }
-    return star_map.get(value or "", 5)
+    return star_map.get(value or "")
+
+
+def _parse_google_timestamp(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 async def fetch_google_reviews_for_parent(
-    agency: Agency, integration: GoogleIntegration, review_parent: str
+    agency: Agency,
+    integration: GoogleIntegration,
+    review_parent: str,
+    updated_after: Optional[datetime] = None,
 ) -> List[Dict[str, Any]]:
+    """Fetch reviews ordered by updateTime desc. When updated_after is given,
+    stop paging once a page ends with reviews older than that cutoff — GBP
+    quotas are low, so full re-fetches every sync are wasteful."""
     if _is_test_mode(agency):
         raise ValueError("Mock review fetch should be handled before live Google review fetch")
 
@@ -378,10 +404,16 @@ async def fetch_google_reviews_for_parent(
             integration.access_token,
             params=params,
         )
-        reviews.extend(payload.get("reviews", []))
+        page = payload.get("reviews", [])
+        reviews.extend(page)
         next_page_token = payload.get("nextPageToken")
         if not next_page_token:
             break
+
+        if updated_after and page:
+            oldest_update = _parse_google_timestamp(page[-1].get("updateTime"))
+            if oldest_update and oldest_update < updated_after:
+                break
 
     return reviews
 
@@ -473,6 +505,28 @@ async def build_google_integration_status(
     }
 
 
+async def _sync_google_owner_reply(db: AsyncSession, review: Review, item: Dict[str, Any]) -> None:
+    """Mirror a reply the owner posted directly on Google (outside this app)
+    so the review doesn't look unanswered in the dashboard."""
+    reply_data = item.get("reviewReply") or {}
+    comment = reply_data.get("comment")
+    if not comment:
+        return
+
+    result = await db.execute(
+        select(ReviewReply).filter(ReviewReply.review_id == review.id, ReviewReply.status == "posted")
+    )
+    existing = result.scalars().first()
+    if existing:
+        # Only track edits for replies we mirrored; replies posted through the
+        # app keep their local content as the source of truth.
+        if existing.generated_by == "google_sync" and existing.content != comment:
+            existing.content = comment
+        return
+
+    db.add(ReviewReply(review_id=review.id, content=comment, status="posted", generated_by="google_sync"))
+
+
 async def import_google_reviews_for_location(
     db: AsyncSession, location: Location, integration: GoogleIntegration, agency: Agency
 ) -> Dict[str, Any]:
@@ -484,20 +538,43 @@ async def import_google_reviews_for_location(
         if not location.google_location_id:
             raise ValueError("Location is not mapped to a Google Business Profile location")
 
-        if _is_test_mode(agency) or not integration.access_token:
+        # Validate the mapping in every mode so a broken mapping can never
+        # silently import mock data instead of failing.
+        review_parent = _normalize_google_review_parent(location.google_location_id)
+
+        if _is_test_mode(agency):
+            external_reviews = _build_mock_reviews(location)
+        elif not integration.access_token:
+            if not _demo_mode_enabled():
+                raise ValueError("Google integration has no access token. Reconnect the Google account.")
+            logger.warning("DEMO_MODE: integration has no access token, using mock reviews")
             external_reviews = _build_mock_reviews(location)
         else:
+            # Incremental fetch: overlap the last sync window by a day so
+            # clock skew or a mid-page edit can't drop a review.
+            updated_after = None
+            if location.last_sync_time:
+                last_sync = location.last_sync_time
+                if last_sync.tzinfo is None:
+                    last_sync = last_sync.replace(tzinfo=timezone.utc)
+                updated_after = last_sync - timedelta(days=1)
+
             try:
                 integration = await ensure_valid_google_access_token(db, agency, integration)
-                review_parent = _normalize_google_review_parent(location.google_location_id)
-                external_reviews = await fetch_google_reviews_for_parent(agency, integration, review_parent)
+                external_reviews = await fetch_google_reviews_for_parent(
+                    agency, integration, review_parent, updated_after
+                )
             except ValueError:
-                logger.warning("Failed to fetch Google reviews, falling back to mock reviews")
+                if not _demo_mode_enabled():
+                    raise
+                logger.warning("DEMO_MODE: failed to fetch Google reviews, falling back to mock reviews")
                 external_reviews = _build_mock_reviews(location)
 
         imported = 0
+        updated = 0
         skipped = 0
-        imported_review_ids: List[uuid.UUID] = []
+        new_reviews: List[tuple] = []  # (review_id, review_date)
+        updated_review_ids: List[uuid.UUID] = []
 
         for item in external_reviews:
             source_review_id = item.get("review_id") or item.get("reviewId")
@@ -506,11 +583,32 @@ async def import_google_reviews_for_location(
                 skipped += 1
                 continue
 
-            existing = await db.execute(
+            rating = item.get("rating")
+            if rating is None:
+                rating = _parse_google_star_rating(item.get("starRating"))
+            if rating is None:
+                logger.warning(
+                    "Skipping Google review %s with unknown star rating %r",
+                    source_review_id, item.get("starRating"),
+                )
+                skipped += 1
+                continue
+
+            existing_res = await db.execute(
                 select(Review).filter(Review.source == "google", Review.source_review_id == source_review_id)
             )
-            if existing.scalars().first():
-                skipped += 1
+            existing = existing_res.scalars().first()
+
+            if existing:
+                # Reviews can be edited on Google after we first imported them.
+                if existing.text != item.get("comment") or existing.rating != int(rating):
+                    existing.text = item.get("comment")
+                    existing.rating = int(rating)
+                    updated_review_ids.append(existing.id)
+                    updated += 1
+                else:
+                    skipped += 1
+                await _sync_google_owner_reply(db, existing, item)
                 continue
 
             reviewer = item.get("reviewer", {})
@@ -526,28 +624,51 @@ async def import_google_reviews_for_location(
                     source_review_id=source_review_id,
                     author_name=item.get("author_name") or reviewer.get("displayName"),
                     author_image_url=item.get("author_image_url") or reviewer.get("profilePhotoUrl"),
-                    rating=int(item.get("rating", _parse_google_star_rating(item.get("starRating")))),
+                    rating=int(rating),
                     text=item.get("comment"),
                     review_date=review_date,
             )
             db.add(review)
             await db.flush()
-            imported_review_ids.append(review.id)
+            await _sync_google_owner_reply(db, review, item)
+            new_reviews.append((review.id, review_date))
             imported += 1
 
         location.last_sync_time = _utcnow()
+        # Activation KPI: stamp only the first successful sync for this agency
+        await db.execute(
+            update(Agency)
+            .where(Agency.id == agency.id, Agency.first_synced_at.is_(None))
+            .values(first_synced_at=_utcnow())
+        )
         await db.commit()
         await db.refresh(location)
 
-        for review_id in imported_review_ids:
+        # Smart rules and crisis detection only apply to reviews written after
+        # the Google account was connected. A first sync imports the entire
+        # historical backlog; auto-replying to or alerting on years-old reviews
+        # would be publicly visible noise (and a mass AI publish).
+        connected_at = integration.created_at
+        if connected_at and connected_at.tzinfo is None:
+            connected_at = connected_at.replace(tzinfo=timezone.utc)
+
+        for review_id, review_date in new_reviews:
             await analyze_review_sentiment_and_topics(db, review_id)
-            await check_and_apply_smart_rules(db, review_id)
-            await detect_crisis(db, review_id)
+            rd = review_date if review_date.tzinfo else review_date.replace(tzinfo=timezone.utc)
+            if connected_at is None or rd >= connected_at:
+                await check_and_apply_smart_rules(db, review_id)
+                await detect_crisis(db, review_id)
+
+        # Edited reviews: refresh sentiment/topics only. Re-running smart rules
+        # would auto-reply a second time to an already-answered review.
+        for review_id in updated_review_ids:
+            await analyze_review_sentiment_and_topics(db, review_id)
 
         await mark_google_sync_status(db, integration, "success", None)
         return {
             "status": "success",
             "imported_reviews": imported,
+            "updated_reviews": updated,
             "skipped_reviews": skipped,
             "synced_location_id": str(location.id),
             "google_location_id": location.google_location_id,

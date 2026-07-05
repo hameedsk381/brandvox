@@ -77,7 +77,8 @@ class TestSyncFailureBackoff:
         assert integration.sync_failures == 1
         assert integration.last_sync_status == "failed"
         assert integration.next_sync_at is not None
-        assert integration.next_sync_at > datetime.now(timezone.utc)
+        # next_sync_at is stored as naive UTC
+        assert integration.next_sync_at > datetime.utcnow()
 
     async def test_sync_failures_accumulate_across_multiple_failures(self, db_session):
         """Verify that repeated failures increment the counter with exponential backoff."""
@@ -93,9 +94,9 @@ class TestSyncFailureBackoff:
         assert integration.sync_failures == 3
         assert integration.last_sync_status == "failed"
 
-        # 2^3 = 8 hours backoff
-        expected_min = datetime.now(timezone.utc) + timedelta(hours=7)
-        expected_max = datetime.now(timezone.utc) + timedelta(hours=9)
+        # 2^3 = 8 hours backoff (naive UTC)
+        expected_min = datetime.utcnow() + timedelta(hours=7)
+        expected_max = datetime.utcnow() + timedelta(hours=9)
         assert expected_min < integration.next_sync_at < expected_max
 
     async def test_success_resets_failures_and_clears_next_sync(self, db_session):
@@ -106,14 +107,16 @@ class TestSyncFailureBackoff:
         integration.next_sync_at = datetime.now(timezone.utc) + timedelta(hours=8)
         await db_session.commit()
 
+        # Patch at the defining modules: import_google_reviews_for_location
+        # imports these lazily inside the function body.
         with patch(
-            "app.services.google_integration_service.analyze_review_sentiment_and_topics",
+            "app.services.sentiment_service.analyze_review_sentiment_and_topics",
             new=AsyncMock(),
         ), patch(
-            "app.services.google_integration_service.check_and_apply_smart_rules",
+            "app.services.reply_service.check_and_apply_smart_rules",
             new=AsyncMock(),
         ), patch(
-            "app.services.google_integration_service.detect_crisis",
+            "app.services.alert_service.detect_crisis",
             new=AsyncMock(),
         ):
             result = await import_google_reviews_for_location(db_session, location, integration, agency)
@@ -125,16 +128,18 @@ class TestSyncFailureBackoff:
 
     async def test_calculate_next_sync_exponential_backoff(self, db_session):
         """Verify the exponential backoff formula directly."""
-        now = datetime.now(timezone.utc)
+        # The service works in naive UTC datetimes (matching the DB columns).
+        now = datetime.utcnow()
 
+        # Formula: min(2^failures hours, 24h cap)
         t1 = _calculate_next_sync_after_failure(1)
-        assert timedelta(hours=1.5) > (t1 - now) >= timedelta(hours=1)
+        assert timedelta(hours=2.5) > (t1 - now) >= timedelta(hours=2)
 
         t2 = _calculate_next_sync_after_failure(2)
-        assert timedelta(hours=2.5) > (t2 - now) >= timedelta(hours=2)
+        assert timedelta(hours=4.5) > (t2 - now) >= timedelta(hours=4)
 
         t5 = _calculate_next_sync_after_failure(5)
-        assert timedelta(hours=24) >= (t5 - now) >= timedelta(hours=2)
+        assert timedelta(hours=24.5) > (t5 - now) >= timedelta(hours=23.5)
 
     async def test_mark_google_sync_status_failure(self, db_session):
         """Verify mark_google_sync_status increments failures on failure."""
@@ -157,6 +162,72 @@ class TestSyncFailureBackoff:
         assert integration.sync_failures == 0
         assert integration.last_sync_status == "success"
         assert integration.next_sync_at is None
+
+
+class TestReviewUpsert:
+
+    async def test_unknown_rating_skipped_edits_upserted_and_owner_reply_mirrored(self, db_session):
+        from sqlalchemy import select
+        from app.models.review import Review, ReviewReply
+
+        agency, client, location, integration = await create_integration_graph(db_session)
+        agency.google_oauth_client_id = "real-client-id"  # take the live fetch path
+        await db_session.commit()
+
+        pipeline_patches = lambda: (
+            patch("app.services.sentiment_service.analyze_review_sentiment_and_topics", new=AsyncMock()),
+            patch("app.services.reply_service.check_and_apply_smart_rules", new=AsyncMock()),
+            patch("app.services.alert_service.detect_crisis", new=AsyncMock()),
+            patch(
+                "app.services.google_integration_service.ensure_valid_google_access_token",
+                new=AsyncMock(return_value=integration),
+            ),
+        )
+
+        items_v1 = [
+            {"reviewId": "g-1", "starRating": "FOUR", "comment": "Good service",
+             "createTime": "2026-01-01T00:00:00Z", "reviewer": {"displayName": "Alice"}},
+            {"reviewId": "g-2", "starRating": "UNSPECIFIED", "comment": "??",
+             "createTime": "2026-01-01T00:00:00Z"},
+        ]
+        p1, p2, p3, p4 = pipeline_patches()
+        with p1, p2, p3, p4, patch(
+            "app.services.google_integration_service.fetch_google_reviews_for_parent",
+            new=AsyncMock(return_value=items_v1),
+        ):
+            result1 = await import_google_reviews_for_location(db_session, location, integration, agency)
+
+        assert result1["imported_reviews"] == 1
+        assert result1["skipped_reviews"] == 1  # unknown rating must not default to 5
+
+        # Same review, edited on Google (rating + text) and answered by the owner
+        items_v2 = [
+            {"reviewId": "g-1", "starRating": "ONE", "comment": "Edited: it got worse",
+             "createTime": "2026-01-01T00:00:00Z", "reviewer": {"displayName": "Alice"},
+             "reviewReply": {"comment": "We are sorry!", "updateTime": "2026-01-02T00:00:00Z"}},
+        ]
+        p1, p2, p3, p4 = pipeline_patches()
+        with p1, p2, p3, p4, patch(
+            "app.services.google_integration_service.fetch_google_reviews_for_parent",
+            new=AsyncMock(return_value=items_v2),
+        ):
+            result2 = await import_google_reviews_for_location(db_session, location, integration, agency)
+
+        assert result2["updated_reviews"] == 1
+        assert result2["imported_reviews"] == 0
+
+        review_res = await db_session.execute(
+            select(Review).filter(Review.source == "google", Review.source_review_id == "g-1")
+        )
+        review = review_res.scalars().one()
+        assert review.rating == 1
+        assert review.text == "Edited: it got worse"
+
+        reply_res = await db_session.execute(select(ReviewReply).filter(ReviewReply.review_id == review.id))
+        reply = reply_res.scalars().one()
+        assert reply.status == "posted"
+        assert reply.generated_by == "google_sync"
+        assert reply.content == "We are sorry!"
 
 
 class TestSyncFailureNotifications:

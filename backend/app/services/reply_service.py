@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from uuid import UUID
 from typing import List, Dict, Any, Optional
 from sqlalchemy import update
@@ -6,13 +7,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 from app.models.review import Review, ReviewReply
-from app.models.tenant import Location, Client
+from app.models.tenant import Agency, Location, Client
 from app.models.integration import GoogleIntegration
 from app.models.brand_voice import BrandVoiceProfile, SmartRule
 from app.ai.review_reply import generate_reply
 from app.services.google_integration_service import publish_google_review_reply
 
 logger = logging.getLogger(__name__)
+
+# Google Business Profile rejects review replies longer than 4096 characters.
+GOOGLE_REPLY_MAX_CHARS = 4096
 
 async def get_brand_voice_for_client(db: AsyncSession, client_id: UUID) -> BrandVoiceProfile:
     result = await db.execute(select(BrandVoiceProfile).filter(BrandVoiceProfile.client_id == client_id))
@@ -64,7 +68,16 @@ async def generate_ai_reply_options(db: AsyncSession, review_id: UUID) -> List[D
         industry=client.industry,
         author_name=review.author_name
     )
-    
+
+    if options:
+        # Activation KPI: stamp only the first successful AI reply for this agency
+        await db.execute(
+            update(Agency)
+            .where(Agency.id == client.agency_id, Agency.first_ai_reply_at.is_(None))
+            .values(first_ai_reply_at=datetime.utcnow())
+        )
+        await db.commit()
+
     return options
 
 async def save_reply(
@@ -83,6 +96,12 @@ async def save_reply(
     review = review_res.scalars().first()
     if not review:
         raise ValueError("Review not found")
+
+    content = (content or "").strip()
+    if not content:
+        raise ValueError("Reply content is empty")
+    if len(content) > GOOGLE_REPLY_MAX_CHARS:
+        raise ValueError(f"Reply exceeds Google's {GOOGLE_REPLY_MAX_CHARS}-character limit ({len(content)} chars)")
 
     if status == "posted" and review.source == "google" and review.location and review.location.google_location_id:
         integration_res = await db.execute(
@@ -197,13 +216,12 @@ async def check_and_apply_smart_rules(db: AsyncSession, review_id: UUID) -> Opti
             break
             
     if not matching_rule:
-        # Default behavior: 4-5 stars auto_reply, 3 stars approval, 1-2 stars escalate
-        if review.rating >= 4:
-            action = "auto_reply"
-        elif review.rating == 3:
-            action = "approval_required"
-        else:
+        # Safe default when no rule is configured: never publish without a human.
+        # Auto-reply must be an explicit opt-in via a smart rule.
+        if review.rating <= 2:
             action = "escalate"
+        else:
+            action = "approval_required"
     else:
         action = matching_rule.action
         

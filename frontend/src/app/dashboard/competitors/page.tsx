@@ -135,6 +135,16 @@ export default function CompetitorsPage() {
         )}
       </div>
 
+      {/* Sample-data disclaimer: competitor reviews are seeded templates until
+          a real data source is connected. Never let this render as real intel. */}
+      {analytics?.is_sample_data && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-600 dark:text-amber-400">
+          <span className="font-semibold">Sample data:</span> competitor metrics and AI analysis below are
+          generated from illustrative sample reviews, not real competitor data. Do not share them with clients
+          as competitive intelligence.
+        </div>
+      )}
+
       {/* Grid: Stats and List */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Competitor List & Admin Panel */}

@@ -29,12 +29,14 @@ async def analyze_review_sentiment_and_topics(db: AsyncSession, review_id: UUID)
             exist_sent.sentiment = sentiment_data["sentiment"]
             exist_sent.confidence = sentiment_data["confidence"]
             exist_sent.emotions = sentiment_data["emotions"]
+            exist_sent.model = sentiment_data.get("model")
         else:
             db_sentiment = SentimentResult(
                 review_id=review_id,
                 sentiment=sentiment_data["sentiment"],
                 confidence=sentiment_data["confidence"],
-                emotions=sentiment_data["emotions"]
+                emotions=sentiment_data["emotions"],
+                model=sentiment_data.get("model")
             )
             db.add(db_sentiment)
             

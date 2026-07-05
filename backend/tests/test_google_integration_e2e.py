@@ -88,7 +88,11 @@ async def test_1_auth_url_endpoint(db_session, use_auth):
         data = resp.json()
         assert "url" in data
         assert "accounts.google.com" in data["url"]
-        assert str(client.id) in data["url"]
+        # state is a signed token carrying the client_id (CSRF protection)
+        from urllib.parse import parse_qs, urlparse
+        from app.api.google_auth import decode_oauth_state
+        state = parse_qs(urlparse(data["url"]).query)["state"][0]
+        assert decode_oauth_state(state) == str(client.id)
     else:
         assert resp.status_code == 401
 
@@ -126,9 +130,18 @@ async def test_3_oauth_callback(db_session):
         yield db_session
     app.dependency_overrides[get_db] = override_get_db
 
+    from app.api.google_auth import create_oauth_state
+    state = create_oauth_state(str(client.id))
+
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         resp = await ac.post(
+            f"/api/integrations/google/callback?code=test-code&state={state}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        # Raw client_id as state must be rejected (CSRF protection)
+        forged = await ac.post(
             f"/api/integrations/google/callback?code=test-code&state={client.id}",
             headers={"Authorization": f"Bearer {token}"},
         )
@@ -136,6 +149,8 @@ async def test_3_oauth_callback(db_session):
     app.dependency_overrides.clear()
     assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
     assert resp.json()["status"] == "success"
+    assert resp.json()["client_id"] == str(client.id)
+    assert forged.status_code == 400
 
 
 async def test_4_status_after_connect(db_session):
@@ -332,8 +347,9 @@ async def test_9_full_e2e_flow(db_session):
         assert r1.json()["is_connected"] is False
 
         # Step 2: Connect (OAuth callback with test client)
+        from app.api.google_auth import create_oauth_state
         r2 = await ac.post(
-            f"/api/integrations/google/callback?code=test&state={client.id}",
+            f"/api/integrations/google/callback?code=test&state={create_oauth_state(str(client.id))}",
             headers={"Authorization": f"Bearer {token}"},
         )
         assert r2.status_code == 200

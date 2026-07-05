@@ -22,7 +22,14 @@ async def send_sms(to: str, message: str) -> bool:
         logger.error("Failed to send SMS to %s: %s", to, e)
         return False
 
-async def send_email(to: str, subject: str, content: str) -> bool:
+async def send_email(
+    to: str,
+    subject: str,
+    content: str,
+    attachment: Optional[bytes] = None,
+    attachment_filename: str = "attachment.pdf",
+    attachment_mime_type: str = "application/pdf",
+) -> bool:
     if not settings.SENDGRID_API_KEY:
         logger.info("SendGrid not configured — email to %s logged instead of sent: %s", to, subject)
         return True
@@ -35,6 +42,15 @@ async def send_email(to: str, subject: str, content: str) -> bool:
             subject=subject,
             html_content=content,
         )
+        if attachment is not None:
+            import base64
+            from sendgrid.helpers.mail import Attachment, FileContent, FileName, FileType, Disposition
+            message.attachment = Attachment(
+                FileContent(base64.b64encode(attachment).decode()),
+                FileName(attachment_filename),
+                FileType(attachment_mime_type),
+                Disposition("attachment"),
+            )
         sg = SendGridAPIClient(settings.SENDGRID_API_KEY)
         sg.send(message)
         return True

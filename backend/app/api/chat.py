@@ -5,8 +5,10 @@ from sqlalchemy import select
 from pydantic import BaseModel
 from typing import Optional
 
+from uuid import UUID
+
 from app.database import get_db
-from app.core.dependencies import get_current_active_user
+from app.core.dependencies import get_current_active_user, check_location_access
 from app.models.user import User
 from app.models.chat import ChatSession, SessionType
 from app.ai.agent import run_chat_agent
@@ -25,6 +27,13 @@ async def chat_manager(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
+    if request.location_id:
+        try:
+            location_uuid = UUID(request.location_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid location ID")
+        await check_location_access(location_uuid, current_user, db)
+
     if request.session_id:
         stmt = select(ChatSession).where(ChatSession.id == request.session_id, ChatSession.user_id == current_user.id)
         result = await db.execute(stmt)

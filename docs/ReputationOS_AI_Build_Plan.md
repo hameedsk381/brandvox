@@ -1,5 +1,10 @@
 # ReputationOS AI — Build Plan (Compressed 12-Month Execution)
 
+> **Status note (2026-07-03):** strategy document, not a status document. For current product
+> state and the active milestone see `product-roadmap.md` v2.0 (built & hardened, pre-revenue,
+> Phase 6 = first paying customers; Phase 5 breadth frozen). Any completion claims below predate
+> the July 2026 re-baseline.
+
 > Based on v2 strategic roadmap with timing compression for fastest differentiation.
 
 ---

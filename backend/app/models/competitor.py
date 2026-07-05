@@ -24,6 +24,9 @@ class CompetitorReview(Base, BaseMixin):
     text = Column(Text, nullable=True)
     review_date = Column(DateTime, nullable=False)
     sentiment = Column(String(50), nullable=True)  # positive, negative, neutral, mixed
+    # "sample" = seeded template data, "google" = real fetched data.
+    # NULL is legacy data, which was always seeded — treat as sample.
+    source = Column(String(50), nullable=True, default="sample")
 
     # Relationships
     competitor = relationship("Competitor", back_populates="reviews")

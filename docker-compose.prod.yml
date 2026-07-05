@@ -1,0 +1,75 @@
+# Production compose file. Usage:
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Requires a .env file next to this file with REAL values for at least:
+#   POSTGRES_PASSWORD, JWT_SECRET, ENCRYPTION_KEY, GROQ_API_KEY,
+#   FRONTEND_URL, BACKEND_URL, BACKEND_CORS_ORIGINS
+# The backend refuses to boot in production mode with a default JWT_SECRET,
+# a missing ENCRYPTION_KEY, or DEMO_MODE=true — that is intentional.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set in .env}
+    # No host port mapping: the database is reachable only from the compose
+    # network. Use `docker compose exec postgres psql` or the backup scripts.
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: base
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    # No source mount in production; the image is the artifact.
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_URL_SYNC: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      JWT_SECRET: ${JWT_SECRET:?set in .env}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_EXPIRY_HOURS: ${JWT_EXPIRY_HOURS:-24}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set in .env}
+      DEMO_MODE: "false"
+      ENABLE_SCHEDULER: ${ENABLE_SCHEDULER:-true}
+      GROQ_API_KEY: ${GROQ_API_KEY:?set in .env}
+      BACKEND_URL: ${BACKEND_URL:?set in .env}
+      FRONTEND_URL: ${FRONTEND_URL:?set in .env}
+      BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:?set in .env}
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
+      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:-}
+      AUDIT_LOG_RETENTION_DAYS: ${AUDIT_LOG_RETENTION_DAYS:-90}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Run migrations, then serve. Single worker on purpose: the scheduler
+    # advisory lock handles extra replicas, but one box does not need them yet.
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: ${BACKEND_URL:?set in .env}
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:

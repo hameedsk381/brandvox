@@ -89,3 +89,6 @@ class CompetitorMetrics(BaseModel):
 class ComparisonAnalyticsResponse(BaseModel):
     client: CompetitorMetrics
     competitors: List[CompetitorMetrics]
+    # True when any competitor metrics are computed from seeded sample
+    # reviews rather than real data. The UI must show a banner when set.
+    is_sample_data: bool = False

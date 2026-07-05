@@ -1,5 +1,9 @@
 # ReputationOS AI -- Strategic Implementation Plan (12-Month Roadmap)
 
+> **Status note (2026-07-03):** strategy document, not a status document. For current product
+> state and the active milestone see `product-roadmap.md` v2.0 (built & hardened, pre-revenue,
+> Phase 6 = first paying customers). Any completion claims below predate the July 2026 re-baseline.
+
 ## Vision
 
 Transform ReputationOS AI from an **AI Review Management Platform** into

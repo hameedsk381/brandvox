@@ -18,7 +18,9 @@ logger = logging.getLogger(__name__)
 
 # Fallback heuristic keywords
 CRISIS_KEYWORDS = {
-    AlertCategory.health_safety: ["food poisoning", "hospital", "sick", "roach", "rat", "glass in food", "raw chicken"],
+    # Keep phrases specific: broad words like "sick" turn "sick of waiting"
+    # into a critical health & safety alert and spam customer webhooks.
+    AlertCategory.health_safety: ["food poisoning", "got sick after", "made me sick", "hospital", "roach", "cockroach", "rat", "glass in food", "raw chicken"],
     AlertCategory.legal: ["sue", "sued", "lawyer", "lawsuit", "illegal", "attorney", "court"],
     AlertCategory.pr_crisis: ["racist", "assault", "harass", "discriminate", "scam", "police", "fraud"],
     AlertCategory.spam: ["bitcoin", "crypto", "forex", "invest", "click here", "buy followers"],

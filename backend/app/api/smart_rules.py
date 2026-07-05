@@ -8,7 +8,7 @@ from app.schemas.brand_voice import SmartRuleResponse, SmartRuleCreate, SmartRul
 from app.models.brand_voice import SmartRule
 from app.models.user import User
 from app.services.audit_service import audit_service
-from app.core.dependencies import get_current_active_user, RoleChecker
+from app.core.dependencies import get_current_active_user, RoleChecker, check_location_access
 from fastapi import Request
 
 router = APIRouter(prefix="/smart-rules", tags=["settings"])
@@ -19,10 +19,8 @@ async def list_smart_rules(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    if current_user.role != "super_admin":
-        if current_user.location_id and current_user.location_id != location_id:
-            raise HTTPException(status_code=403, detail="Unauthorized location context")
-            
+    await check_location_access(location_id, current_user, db)
+
     result = await db.execute(select(SmartRule).filter(SmartRule.location_id == location_id))
     rules = result.scalars().all()
     
@@ -52,10 +50,8 @@ async def update_smart_rules(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(RoleChecker(["marketing_manager"]))
 ):
-    if current_user.role != "super_admin":
-        if current_user.location_id and current_user.location_id != location_id:
-            raise HTTPException(status_code=403, detail="Unauthorized location context")
-            
+    await check_location_access(location_id, current_user, db)
+
     # Remove existing rules
     from sqlalchemy import delete
     await db.execute(delete(SmartRule).where(SmartRule.location_id == location_id))
