@@ -41,3 +41,7 @@ htmlcov/
 .coverage
 coverage.xml
 *.db
+
+# SQLite test artifacts
+backend/test.db
+backend/test.db-journal
